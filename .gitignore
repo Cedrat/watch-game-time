@@ -1,0 +1,5 @@
+/.vscode
+/activity_tracker.db
+/activity_tracker.db-shm
+/activity_tracker.db-wal
+/SteamTracker.exe
