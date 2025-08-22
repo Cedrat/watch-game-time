@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Configuration — Listes</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+.card { border:1px solid #ddd; border-radius:10px; padding:12px; margin-bottom:14px; }
+h2 { margin: 4px 0 10px 0; }
+.list { display:flex; flex-wrap:wrap; gap:6px; }
+.chip { display:inline-flex; align-items:center; gap:6px; border:1px solid #ccc; border-radius:999px; padding:4px 8px; }
+.chip button { border:none; background:#eee; cursor:pointer; border-radius:6px; padding:2px 6px; }
+.chip .rm { background:#fbe9e7; }
+.controls { display:flex; gap:8px; align-items:center; margin:8px 0; }
+input[type=text]{ padding:6px 8px; }
+button { padding:6px 10px; cursor:pointer; }
+.small { color:#666; font-size:12px; }
+.table { width:100%; border-collapse:collapse; }
+.table th, .table td { border-bottom:1px solid #eee; padding:8px; text-align:left; }
+.badge { display:inline-block; font-size:12px; padding:2px 6px; border-radius:6px; }
+.badge.bl { background:#ffebee; color:#b71c1c; }
+.badge.wl { background:#e8f5e9; color:#1b5e20; }
+header a { margin-right: 12px; }
+/* Info tooltip */
+.info-wrap { position: relative; display:inline-block; margin-left:8px; }
+.info-icon { border:none; background:transparent; cursor:pointer; font-size:14px; line-height:1; }
+.tooltip { display:none; position:absolute; z-index:5; left:20px; top:50%; transform: translateY(-50%); max-width:360px; background:#111; color:#fff; padding:8px 10px; border-radius:6px; font-size:12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+.info-wrap:hover .tooltip, .info-wrap:focus-within .tooltip { display:block; }
+.tooltip { display:none; position:absolute; z-index:5; left:20px; top:50%; transform: translateY(-50%); max-width:360px; background:#111; color:#fff; padding:8px 10px; border-radius:6px; font-size:12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+/* Date popup */
+.date-pop { position:absolute; background:#fff; border:1px solid #ccc; padding:6px; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15); z-index: 20; }
+.date-pop input[type="date"]{ padding:4px; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">Tableau de bord</a>
+  <a href="/history">Historique</a>
+  <h1>Configuration</h1>
+</header>
+
+<section class="card">
+  <h2>Whitelist <span class="info-wrap"><button class="info-icon" aria-label="Information" title="Information">ℹ️</button><span class="tooltip" role="tooltip">La whitelist est une liste de fragments de chemin. Si elle n’est pas vide, seules les activités dont le chemin complet contient au moins un de ces fragments sont prises en compte. La correspondance est une recherche de sous-chaîne sensible à la casse.</span></span></h2>
+  <div class="controls">
+    <input type="text" id="wlInput" placeholder="Ajouter un chemin" />
+    <button id="wlAdd">Ajouter</button>
+  </div>
+  <div id="wlList" class="list"></div>
+</section>
+
+<section class="card">
+  <h2>Processus connus</h2>
+  <div class="small">Liste de tous les jeux/processus déjà détectés. Actions rapides pour blacklister / retirer et renommer.</div>
+  <div style="margin:8px 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <label><input type="checkbox" id="cfgHideBL"> Masquer les jeux black‑listés</label>
+    <input type="text" id="knownSearch" placeholder="Rechercher (nom ou origine)" />
+  </div>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Nom</th>
+        <th>Origine</th>
+        <th>Sessions</th>
+        <th>Statut</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="knownBody"></tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Blacklist</h2>
+  <div class="controls">
+    <input type="text" id="blInput" placeholder="Ajouter un chemin" />
+    <button id="blAdd">Ajouter</button>
+  </div>
+  <div id="blList" class="list"></div>
+</section>
+
+<section class="card">
+  <h2>Heure locale / Fuseau horaire</h2>
+  <div class="small" style="margin-bottom:8px;">Sélectionnez le fuseau horaire à utiliser pour l'affichage des heures. Par défaut, le fuseau de votre système est utilisé.</div>
+  <div class="controls" style="flex-wrap:wrap; gap:8px; align-items:center;">
+    <label for="tzSelect">Fuseau horaire:</label>
+    <select id="tzSelect"></select>
+    <button id="tzSave">Enregistrer</button>
+    <button id="tzReset">Réinitialiser (système)</button>
+    <span id="tzInfo" class="small"></span>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Export / Import des données</h2>
+  <div class="small" style="margin-bottom:8px;">Exportez toutes vos données au format JSON, puis réimportez-les sur une autre machine ou après réinstallation.</div>
+  <div class="controls" style="flex-wrap:wrap;">
+    <button id="btnExport">Exporter</button>
+    <span class="small">ou</span>
+    <input type="file" id="importFile" accept="application/json,.json" />
+    <label style="margin-left:8px;"><input type="radio" name="importMode" value="merge" checked /> Cumuler (pas de doublons)</label>
+    <label><input type="radio" name="importMode" value="replace" /> Remplacer tout</label>
+    <button id="btnImport">Importer</button>
+  </div>
+  <div id="importInfo" class="small" style="margin-top:6px;color:#555;"></div>
+</section>
+
+<script>
+async function fetchJSON(url){ const r = await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+async function postJSON(url, body){ const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+
+async function loadLists(){
+  const [whitelist, blacklist] = await Promise.all([
+    fetchJSON('/api/whitelist'), fetchJSON('/api/blacklist')
+  ]);
+  renderList('wlList', whitelist, (name)=>postJSON('/api/unwhitelist',{name}).then(loadAll));
+  renderList('blList', blacklist, (name)=>postJSON('/api/unblacklist',{name}).then(loadAll));
+}
+function renderList(elId, items, onRemove){
+  const el = document.getElementById(elId); el.innerHTML = '';
+  if(!items || items.length===0){ const s=document.createElement('div'); s.className='small'; s.textContent='Aucun élément'; el.appendChild(s); return; }
+  items.sort((a,b)=>a.localeCompare(b,'fr',{sensitivity:'base'})).forEach(name=>{
+    const chip = document.createElement('span'); chip.className='chip';
+    chip.innerHTML = `<span>${name}</span>`;
+    const rm = document.createElement('button'); rm.className='rm'; rm.textContent='Retirer'; rm.onclick=()=>onRemove(name);
+    chip.appendChild(rm); el.appendChild(chip);
+  });
+}
+
+let cfgHideBL = false;
+let knownFilter = '';
+async function loadKnown(){
+  const rows = await fetchJSON('/api/known_processes');
+  const body = document.getElementById('knownBody'); body.innerHTML='';
+  const list = cfgHideBL ? rows.filter(r=>!r.blacklisted) : rows;
+  const kw = (knownFilter||'').trim().toLowerCase();
+  const filtered = kw ? list.filter(r=> (r.name||'').toLowerCase().includes(kw) || ((r.original||r.name||'').toLowerCase().includes(kw)) ) : list;
+  filtered.forEach(r=>{
+    const tr = document.createElement('tr');
+    const status = [];
+    if(r.whitelisted) status.push('<span class="badge wl">WL</span>');
+    if(r.blacklisted) status.push('<span class="badge bl">BL</span>');
+    tr.innerHTML = `<td>${r.name}</td><td>${(r.original||r.name)}</td><td>${r.sessions}</td><td>${status.join(' ')||'-'}</td>`;
+    const actions = document.createElement('td');
+    const bl = document.createElement('button'); bl.textContent = r.blacklisted ? 'Retirer BL' : 'Blacklist';
+    bl.onclick = ()=> (r.blacklisted ? postJSON('/api/unblacklist',{name:r.name}) : postJSON('/api/blacklist',{name:r.name})).then(loadAll);
+    const rn = document.createElement('button'); rn.textContent = 'Renommer'; rn.style.marginLeft='8px';
+    rn.onclick = async ()=>{ const to = prompt('Nouveau nom pour ce jeu:', r.name); if(!to || to===r.name) return; try{ await postJSON('/api/rename',{from:r.name, to}); await loadAll(); }catch(e){ alert('Erreur renommage'); } };
+    const setStart = document.createElement('button'); setStart.textContent = 'Début…'; setStart.style.marginLeft='8px';
+    setStart.onclick = (e)=>pickDate(e.currentTarget, (date)=>setFirstLaunchDate(r.name, date));
+    const setFinish = document.createElement('button'); setFinish.textContent = 'Fin…'; setFinish.style.marginLeft='8px';
+    setFinish.onclick = (e)=>pickDate(e.currentTarget, (date)=>setFinishedDate(r.name, date));
+    actions.appendChild(bl); actions.appendChild(rn); actions.appendChild(setStart); actions.appendChild(setFinish);
+    tr.appendChild(actions);
+    body.appendChild(tr);
+  });
+}
+(function initCfgHideBL(){
+  const el = document.getElementById('cfgHideBL');
+  try { cfgHideBL = localStorage.getItem('cfgHideBL') === '1'; } catch(e) { cfgHideBL=false; }
+  if(el){ el.checked = cfgHideBL; el.addEventListener('change', ()=>{ cfgHideBL = el.checked; try{ localStorage.setItem('cfgHideBL', cfgHideBL?'1':'0'); }catch(e){} loadKnown(); }); }
+})();
+
+(function initKnownSearch(){
+  const el = document.getElementById('knownSearch');
+  if(!el) return;
+  try { knownFilter = localStorage.getItem('knownSearch') || ''; } catch(e) { knownFilter = ''; }
+  el.value = knownFilter;
+  el.addEventListener('input', ()=>{
+    knownFilter = el.value || '';
+    try { localStorage.setItem('knownSearch', knownFilter); } catch(e) {}
+    loadKnown();
+  });
+})();
+
+async function loadAll(){ await Promise.all([loadLists(), loadKnown()]); }
+
+document.getElementById('wlAdd').addEventListener('click', ()=>{
+  const v = (document.getElementById('wlInput').value||'').trim(); if(!v) return; postJSON('/api/whitelist',{name:v}).then(()=>{ document.getElementById('wlInput').value=''; loadAll(); }).catch(()=>alert('Erreur ajout WL'));
+});
+document.getElementById('blAdd').addEventListener('click', ()=>{
+  const v = (document.getElementById('blInput').value||'').trim(); if(!v) return; postJSON('/api/blacklist',{name:v}).then(()=>{ document.getElementById('blInput').value=''; loadAll(); }).catch(()=>alert('Erreur ajout BL'));
+});
+
+loadAll();
+
+// Export / Import logic
+(function initExportImport(){
+  const btnExport = document.getElementById('btnExport');
+  const btnImport = document.getElementById('btnImport');
+  const importFile = document.getElementById('importFile');
+  const info = document.getElementById('importInfo');
+  btnExport.addEventListener('click', async ()=>{
+    // Use fetch to get blob then trigger download to keep filename
+    try{
+      const res = await fetch('/api/export');
+      if(!res.ok) { alert('Erreur export'); return; }
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      let fname = 'steam_tracker_export.json';
+      const m = cd.match(/filename="?([^";]+)"?/i); if(m) fname = m[1];
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    }catch(e){ alert('Erreur export'); }
+  });
+  importFile.addEventListener('change', async ()=>{
+    info.textContent = '';
+    const f = importFile.files && importFile.files[0]; if(!f) return;
+    try{
+      const text = await f.text();
+      const data = JSON.parse(text);
+      const counts = [
+        `activities: ${(data.activities||[]).length}`,
+        `whitelist: ${(data.whitelist||[]).length}`,
+        `blacklist: ${(data.blacklist||[]).length}`,
+        `rename_map: ${(data.rename_map||[]).length}`,
+        `finished_games: ${(data.finished_games||[]).length}`,
+        `first_launch_override: ${(data.first_launch_override||[]).length}`
+      ].join(' · ');
+      info.textContent = `Fichier: ${f.name} — ${counts}`;
+    }catch(e){ info.textContent = 'Fichier invalide'; }
+  });
+  btnImport.addEventListener('click', async ()=>{
+    const f = importFile.files && importFile.files[0]; if(!f){ alert('Sélectionnez un fichier JSON d\'export.'); return; }
+    let mode = 'merge'; const sel = document.querySelector('input[name="importMode"]:checked'); if(sel) mode = sel.value;
+    const text = await f.text(); let data;
+    try{ data = JSON.parse(text); }catch(e){ alert('Fichier JSON invalide'); return; }
+    if(mode==='replace'){
+      const ok = confirm(`ATTENTION: Cette action va remplacer TOUTES les données par celles du fichier "${f.name}". Continuer ?`);
+      if(!ok) return;
+    }
+    try{
+      // Send body as the file content, with mode also included for convenience
+      data.mode = mode;
+      const res = await fetch(`/api/import?mode=${encodeURIComponent(mode)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
+      if(!res.ok){ const t = await res.text(); throw new Error(t||'HTTP '+res.status); }
+      await loadAll();
+      alert('Import terminé: '+mode);
+    }catch(e){ alert('Erreur import: '+(e.message||e)); }
+  });
+})();
+
+function pickDate(anchorEl, onPicked){
+  document.querySelectorAll('.date-pop').forEach(el=>el.remove());
+  const pop = document.createElement('div'); pop.className='date-pop';
+  const inp = document.createElement('input'); inp.type='date';
+  const ok = document.createElement('button'); ok.textContent='OK';
+  const cancel = document.createElement('button'); cancel.textContent='Annuler'; cancel.style.marginLeft='6px';
+  pop.appendChild(inp); pop.appendChild(ok); pop.appendChild(cancel);
+  document.body.appendChild(pop);
+  const r = anchorEl.getBoundingClientRect();
+  pop.style.left = (window.scrollX + r.left) + 'px';
+  pop.style.top = (window.scrollY + r.bottom + 6) + 'px';
+  function close(){ pop.remove(); }
+  cancel.addEventListener('click', close);
+  ok.addEventListener('click', ()=>{ if(inp.value){ onPicked(inp.value); close(); } });
+  inp.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ close(); } if(e.key==='Enter'){ if(inp.value){ onPicked(inp.value); close(); }} });
+  inp.focus();
+}
+
+async function setFirstLaunchDate(name, date){
+  const ok = confirm(`Confirmer la date de premier lancement pour "${name}" au ${date} ?`);
+  if(!ok) return;
+  try{ await postJSON('/api/set_first_launch_date', { name, date }); await loadAll(); }
+  catch(e){ alert('Erreur enregistrement date de premier lancement'); }
+}
+
+async function setFinishedDate(name, date){
+  const ok = confirm(`Confirmer la date de fin pour "${name}" au ${date} ?`);
+  if(!ok) return;
+  try{ await postJSON('/api/set_finished_date', { name, date }); await loadAll(); }
+  catch(e){ alert('Erreur enregistrement date de fin'); }
+}
+// --- Fuseau horaire config ---
+(function initTimezoneCfg(){
+  const sel = document.getElementById('tzSelect');
+  const info = document.getElementById('tzInfo');
+  const btnSave = document.getElementById('tzSave');
+  const btnReset = document.getElementById('tzReset');
+  if(!sel) return;
+  const systemTZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
+  const COMMON_TZ = [
+    'System (auto)',
+    'Europe/Paris','Europe/Brussels','Europe/Zurich','Europe/Berlin','Europe/Madrid','Europe/Rome',
+    'UTC','Etc/UTC','Europe/London','America/New_York','America/Los_Angeles','Asia/Tokyo'
+  ];
+  sel.innerHTML = '';
+  COMMON_TZ.forEach(z=>{ const opt = document.createElement('option'); opt.value=z; opt.textContent=z==='System (auto)'? `${z} — ${systemTZ}` : z; sel.appendChild(opt); });
+  // load saved
+  let saved = '';
+  try { saved = localStorage.getItem('cfgTimezone') || ''; } catch(e) {}
+  if(!saved){ sel.value = 'System (auto)'; info.textContent = `Fuseau système: ${systemTZ}`; }
+  else { sel.value = saved; info.textContent = `Fuseau sélectionné: ${saved}`; }
+  sel.addEventListener('change', ()=>{
+    const v = sel.value;
+    info.textContent = v==='System (auto)' ? `Fuseau système: ${systemTZ}` : `Fuseau sélectionné: ${v}`;
+  });
+  btnSave.addEventListener('click', ()=>{
+    const v = sel.value;
+    try { localStorage.setItem('cfgTimezone', v==='System (auto)'? '' : v); } catch(e) {}
+    alert('Fuseau horaire enregistré.');
+  });
+  btnReset.addEventListener('click', ()=>{
+    try { localStorage.removeItem('cfgTimezone'); } catch(e) {}
+    sel.value = 'System (auto)'; info.textContent = `Fuseau système: ${systemTZ}`;
+    alert('Réinitialisé sur le fuseau système.');
+  });
+})();
+</script>
+</body>
+</html>

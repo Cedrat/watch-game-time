@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Steam Tracker - Tableau de bord</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root{
+  --bg: #f6f7fb;
+  --card: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --primary: #3b82f6;
+  --primary-weak: #dbeafe;
+  --border: #e5e7eb;
+  --shadow: 0 8px 20px rgba(0,0,0,0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root{
+    --bg: #0f172a;
+    --card: #111827;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --primary: #60a5fa;
+    --primary-weak: #1e293b;
+    --border: #1f2937;
+    --shadow: 0 10px 24px rgba(0,0,0,0.4);
+  }
+}
+*{box-sizing:border-box}
+body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; background: var(--bg); color: var(--text); }
+.header{ position:sticky; top:0; z-index:10; background: linear-gradient(180deg, var(--card), color-mix(in oklab, var(--card), transparent 40%)); box-shadow: var(--shadow); }
+.container{ max-width: 1400px; margin: 0 auto; padding: 16px; }
+.headbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.title{ display:flex; align-items:center; gap:12px; font-weight:700; font-size: clamp(18px, 2.5vw, 22px); }
+.badge{ background: var(--primary-weak); color: var(--primary); padding:2px 8px; border-radius:999px; font-size:12px; }
+.controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.select, .input, .btn{ border:1px solid var(--border); background: var(--card); color:var(--text); border-radius:10px; padding:8px 10px; box-shadow: var(--shadow); }
+.btn{ cursor:pointer; transition: background .2s ease, transform .08s ease; }
+.btn:hover{ background: color-mix(in oklab, var(--card), var(--primary-weak) 35%); }
+.btn:active{ transform: translateY(1px); }
+.btn-primary{ background: var(--primary); color:#fff; border-color: color-mix(in oklab, var(--primary), black 10%); }
+.btn-primary:hover{ background: color-mix(in oklab, var(--primary), black 8%); }
+.link{ color: var(--primary); text-decoration:none; }
+.card{ background: var(--card); border:1px solid var(--border); border-radius:16px; padding:12px; box-shadow: var(--shadow); }
+.card + .card{ margin-top:12px; }
+.grid{ display:grid; gap:12px; }
+@media (min-width: 900px){ .grid{ grid-template-columns: 1fr 1fr; } }
+.section{ transition: opacity .25s ease; }
+.hidden{ display:none !important; }
+.fade{ opacity:0.4; }
+#listView table { border-collapse: collapse; width: 100%; }
+#listView th, #listView td { border-bottom: 1px solid var(--border); padding: 10px; }
+#listView th { color: var(--muted); font-weight:600; text-align:left; }
+#pieView, #barView { position: relative; width: 100%; height: 58vh; max-height: 740px; min-height: 260px; }
+#pieView canvas, #barView canvas { width: 100% !important; height: 100% !important; }
+.selector { display:none; }
+.legend-fab{ position:absolute; right:12px; bottom:12px; }
+.legend-panel{ position:absolute; right:12px; bottom:54px; width:min(260px, 80vw); max-height:50%; overflow:auto; background:var(--card); border:1px solid var(--border); border-radius:12px; box-shadow: var(--shadow); padding:10px; display:none; }
+.legend-item{ display:flex; align-items:center; gap:8px; padding:6px; border-radius:8px; }
+.legend-swatch{ width:12px; height:12px; border-radius:3px; border:1px solid var(--border); }
+footer { margin: 16px 0; color: var(--muted); }
+.small{ font-size:12px; color: var(--muted); }
+.sep{ width:1px; height:28px; background: var(--border); margin:0 4px; }
+.quick{ display:flex; gap:6px; flex-wrap:wrap; }
+/* Right sidebar list styles */
+.games-list { display:flex; flex-direction:column; gap:8px; max-height: 60vh; overflow:auto; }
+.game-row { display:flex; align-items:center; gap:10px; padding:8px; border:1px solid var(--border); border-radius:10px; }
+.game-icon { width:20px; height:20px; border-radius:4px; background: var(--primary-weak); display:flex; align-items:center; justify-content:center; font-size:12px; }
+.badge-new { background:#e0f2fe; color:#0369a1; border-radius:999px; padding:2px 8px; font-size:12px; }
+.badge-finish { color:#22c55e; font-weight:600; font-size:12px; }
+/* slightly bigger time label for games list */
+.time-lg { font-size:14px; }
+  /* Heatmap styles */
+  .heatmap { display:flex; gap:8px; overflow:auto; padding:6px 2px; }
+  .heatmap .months { display:flex; flex-direction:column; gap:2px; font-size:12px; color:var(--muted); }
+  .heatmap .grid { display:grid; grid-auto-flow:column; grid-auto-columns:min-content; gap:2px; }
+  .week { display:grid; grid-template-rows: repeat(7, 12px); gap:2px; }
+  .day { width:12px; height:12px; border-radius:2px; background:#e5e7eb; position:relative; }
+  @media (prefers-color-scheme: dark) { .day{ background:#1f2937; } }
+  .day[data-seconds="0"]{ filter:grayscale(0.2); opacity:0.7; }
+  .day:hover{ outline:2px solid #4444; z-index:2; }
+  .tt { position:absolute; pointer-events:none; background:var(--card); color:var(--text); border:1px solid var(--border); box-shadow: var(--shadow); padding:6px 8px; border-radius:8px; font-size:12px; max-width: 280px; display:none; }
+  /* Liserés */
+  .lz-new { box-shadow: inset 0 0 0 2px #3b82f6; }
+  .lz-finish { outline: 2px solid #b45309; }
+  .lz-both { outline:2px solid #b45309; box-shadow: inset 0 0 0 2px #3b82f6; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="container headbar">
+    <div class="title">
+      <img alt="" src="/static/icon.png" onerror="this.style.display='none'" width="22" height="22" />
+      <span>Tableau de bord</span>
+      <span class="badge">Jeux</span>
+    </div>
+    <div class="controls">
+      <label class="small">Période</label>
+      <select id="period" class="select">
+        <option value="day">Jour</option>
+        <option value="week" selected>Semaine</option>
+        <option value="month">Mois</option>
+        <option value="year">Année</option>
+        <option value="custom">Personnalisé</option>
+      </select>
+      <div id="selectors" class="controls">
+        <label id="sel-day" class="selector">Jour: <input type="date" id="dayInput" class="input"></label>
+        <label id="sel-week" class="selector">Semaine: <input type="week" id="weekInput" class="input"></label>
+        <label id="sel-month" class="selector">Mois: <input type="month" id="monthInput" class="input"></label>
+        <label id="sel-year" class="selector">Année: <input type="number" id="yearInput" class="input" min="2000" max="2100" step="1"></label>
+        <label id="sel-custom" class="selector">De <input type="date" id="customStart" class="input"> à <input type="date" id="customEnd" class="input"></label>
+      </div>
+      <div class="sep"></div>
+      <div class="controls">
+        <button id="prevBtn" class="btn" title="Période précédente">⟨</button>
+        <button id="nextBtn" class="btn" title="Période suivante">⟩</button>
+      </div>
+      <div class="quick">
+        <button id="todayBtn" class="btn">Aujourd’hui</button>
+        <button id="thisWeekBtn" class="btn">Cette semaine</button>
+        <button id="thisMonthBtn" class="btn">Ce mois</button>
+        <button id="thisYearBtn" class="btn">Cette année</button>
+      </div>
+      <label id="yearByWrap" class="selector" style="display:none">Agrégation: 
+        <select id="yearGranularity" class="select">
+          <option value="month" selected>Mois</option>
+          <option value="week">Semaine</option>
+        </select>
+      </label>
+      <div class="sep"></div>
+      <button id="viewPie" class="btn btn-primary">Camembert</button>
+      <button id="viewBar" class="btn">Barres</button>
+      <span id="range" class="small"></span>
+      <span id="total" class="small" style="margin-left:8px;"></span>
+      <a class="link" href="/history">Historique</a>
+      <a class="link" href="/config">Configuration</a>
+    </div>
+  </div>
+</div>
+
+<div class="container grid">
+  <section id="pieView" class="card section">
+    <div style="position:relative; width:100%; height:100%">
+      <canvas id="pieCanvas"></canvas>
+      <div class="legend-panel" id="legendPanel"></div>
+      <div class="legend-fab">
+        <button id="legendToggle" class="btn" title="Légende">☰</button>
+      </div>
+    </div>
+  </section>
+  <section id="barView" class="card section hidden">
+    <div style="position:relative; width:100%; height:100%">
+      <canvas id="barCanvas"></canvas>
+      <div class="legend-panel" id="legendPanelBar"></div>
+      <div class="legend-fab">
+        <button id="legendToggleBar" class="btn" title="Légende">☰</button>
+      </div>
+    </div>
+  </section>
+  <section id="periodGames" class="card section">
+    <h3 style="margin:6px 0 10px 0;">Jeux de la période</h3>
+    <div id="gamesList" class="games-list"></div>
+  </section>
+</div>
+
+<section id="heatmapSection" class="container card section">
+  <h3 style="margin:6px 0 10px 0;">Heatmap</h3>
+  <div id="heatmapYear" class="heatmap"></div>
+  <div id="heatmapTT" class="tt"></div>
+  <div id="heatDetail" style="margin-top:10px;"></div>
+</section>
+
+<section id="dayTimelineSection" class="container card section" style="display:none;">
+  <h3 style="margin:6px 0 10px 0;">Journée</h3>
+  <div id="dayDetail"></div>
+</section>
+
+<footer class="container"><small class="small">UI locale sur http://localhost:8080</small></footer>
+
+<script>
+const periodSel = document.getElementById('period');
+const rangeEl = document.getElementById('range');
+const totalEl = document.getElementById('total');
+const pieView = document.getElementById('pieView');
+const barView = document.getElementById('barView');
+const periodGames = document.getElementById('periodGames');
+const dayInput = document.getElementById('dayInput');
+const weekInput = document.getElementById('weekInput');
+const monthInput = document.getElementById('monthInput');
+const yearInput = document.getElementById('yearInput');
+const customStart = document.getElementById('customStart');
+const customEnd = document.getElementById('customEnd');
+const selDay = document.getElementById('sel-day');
+const selWeek = document.getElementById('sel-week');
+const selMonth = document.getElementById('sel-month');
+const selYear = document.getElementById('sel-year');
+const selCustom = document.getElementById('sel-custom');
+const legendPanelPie = document.getElementById('legendPanel');
+const legendPanelBar = document.getElementById('legendPanelBar');
+let chart;
+const gamesListEl = document.getElementById('gamesList');
+let lastMeta = {};
+const heatmapSection = document.getElementById('heatmapSection');
+const heatmapEl = document.getElementById('heatmapYear');
+const heatmapTT = document.getElementById('heatmapTT');
+const heatDetail = document.getElementById('heatDetail');
+const dayTimelineSection = document.getElementById('dayTimelineSection');
+const dayDetail = document.getElementById('dayDetail');
+
+async function loadGamesMetaSidebar(period, start, end, items){
+  try{
+    const qs = new URLSearchParams({period}); if(start&&end){ qs.set('start',start); qs.set('end',end); }
+    const res = await fetch('/api/games_meta?'+qs.toString());
+    const data = await res.json();
+    lastMeta = {};
+    (data.items||[]).forEach(it=>{ lastMeta[it.name] = it; });
+  }catch(e){ lastMeta = {}; }
+  renderGamesList(items||[]);
+}
+
+function renderGamesList(items){
+  gamesListEl.innerHTML = '';
+  if(!items || items.length===0){ const p = document.createElement('div'); p.className='small'; p.textContent='Aucun jeu.'; gamesListEl.appendChild(p); return; }
+  items.forEach(it=>{
+    const row = document.createElement('div'); row.className='game-row';
+    const icon = document.createElement('div'); icon.className='game-icon'; icon.textContent='🎮';
+    const name = document.createElement('div'); name.textContent = it.name; name.style.flex='1';
+    const time = document.createElement('div'); time.textContent = fmtHM(it.seconds||0); time.className='time-lg'; time.style.minWidth='56px'; time.style.textAlign='right';
+    const badges = document.createElement('div'); badges.style.display='flex'; badges.style.gap='6px';
+    const meta = lastMeta[it.name] || {};
+    if(meta.is_new){ const b = document.createElement('span'); b.className='badge-new'; b.textContent='New'; badges.appendChild(b); }
+    if(meta.finished_in_period){ const f = document.createElement('span'); f.className='badge-finish'; f.textContent='✔ Fini'; badges.appendChild(f); }
+    row.appendChild(icon); row.appendChild(name); row.appendChild(time); row.appendChild(badges);
+    gamesListEl.appendChild(row);
+  });
+}
+
+// Heatmap helpers
+function heatColor(seconds){
+  const h = Math.min(1, (seconds||0) / 14400); // cap at 4h per day for color scale
+  // from light to dark green
+  const l = 92 - Math.round(h*52); // 92% -> 40%
+  const s = 55 + Math.round(h*25); // 55% -> 80%
+  return `hsl(145 ${s}% ${l}% / 0.95)`;
+}
+
+function buildHeatmap(year, days){
+  heatmapEl.innerHTML='';
+  const map = {};
+  (days||[]).forEach(d=>{ map[d.date]=d; });
+  // Determine start Monday before Jan 1 and end Sunday after Dec 31 to fill grid
+  const start = new Date(Date.UTC(year,0,1));
+  const end = new Date(Date.UTC(year,11,31));
+  let cur = new Date(start);
+  while(cur.getUTCDay()!==1){ cur.setUTCDate(cur.getUTCDate()-1); }
+  const last = new Date(end);
+  while(last.getUTCDay()!==0){ last.setUTCDate(last.getUTCDate()+1); }
+  // Build weeks
+  const grid = document.createElement('div'); grid.className='grid';
+  for(let d=new Date(cur); d<=last; d.setUTCDate(d.getUTCDate()+7)){
+    const week = document.createElement('div'); week.className='week';
+    for(let i=0;i<7;i++){
+      const cellDate = new Date(d); cellDate.setUTCDate(d.getUTCDate()+i);
+      const ymdStr = cellDate.toISOString().slice(0,10);
+      const info = map[ymdStr] || {seconds:0, new:[], finished:[]};
+      const div = document.createElement('div'); div.className='day';
+      div.dataset.date = ymdStr; div.dataset.seconds = String(Math.round(info.seconds||0));
+      div.style.background = heatColor(info.seconds||0);
+      const hasNew = (info.new||[]).length>0; const hasFin = (info.finished||[]).length>0;
+      if(hasNew && hasFin) div.classList.add('lz-both'); else if(hasNew) div.classList.add('lz-new'); else if(hasFin) div.classList.add('lz-finish');
+      // Tooltip
+      div.addEventListener('mouseenter', (e)=>{
+        const dt = ymdStr;
+        const hours = fmtHM(info.seconds||0);
+        const ng = (info.new||[]).length? ('<br><b>Nouveaux:</b> '+info.new.join(', ')) : '';
+        const fg = (info.finished||[]).length? ('<br><b>Terminés:</b> '+info.finished.join(', ')) : '';
+        heatmapTT.innerHTML = `<b>${formatDateFR(dt)}</b><br>${hours} jouées${ng}${fg}`;
+        heatmapTT.style.display='block';
+      });
+      div.addEventListener('mousemove', (e)=>{
+        const pad = 12; heatmapTT.style.left = (e.pageX+pad)+'px'; heatmapTT.style.top = (e.pageY+pad)+'px';
+      });
+      div.addEventListener('mouseleave', ()=>{ heatmapTT.style.display='none'; });
+      // Click to load day timeline
+      div.addEventListener('click', ()=>{ renderDayTimeline(ymdStr); });
+      // dim cells outside the target year
+      if(cellDate.getUTCFullYear()!==year){ div.style.opacity='0.25'; div.style.filter='grayscale(0.6)'; }
+      week.appendChild(div);
+    }
+    grid.appendChild(week);
+  }
+  heatmapEl.appendChild(grid);
+}
+
+// Helpers: French month names and period title
+const MONTHS_FR = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+function capFirst(s){ return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+function parseYMD(ymd){ // parse as UTC to avoid TZ shifts
+  const [y,m,d] = ymd.split('-').map(n=>parseInt(n,10));
+  return new Date(Date.UTC(y, (m||1)-1, d||1));
+}
+function formatDateFR(ymd){
+  const d = parseYMD(ymd);
+  const day = d.getUTCDate();
+  const month = MONTHS_FR[d.getUTCMonth()];
+  const year = d.getUTCFullYear();
+  return `${day} ${month} ${year}`;
+}
+function periodTitle(period, start, end){
+  if(period==='day') return `Jour du ${formatDateFR(start)}`;
+  if(period==='week') return `Semaine du ${formatDateFR(start)} au ${formatDateFR(end)}`;
+  if(period==='month'){
+    const d = parseYMD(start); return `Mois de ${capFirst(MONTHS_FR[d.getUTCMonth()])} ${d.getUTCFullYear()}`;
+  }
+  if(period==='year'){
+    const y = (start||'').slice(0,4) || String(new Date().getFullYear());
+    return `Année ${y}`;
+  }
+  if(start && end) return `Période du ${formatDateFR(start)} au ${formatDateFR(end)}`;
+  return 'Période';
+}
+
+function fmtHM(seconds){
+  const m = Math.floor(seconds/60);
+  const h = Math.floor(m/60);
+  const mm = (m%60).toString().padStart(2,'0');
+  return `${h}:${mm}`;
+}
+
+function withFade(el, fn){ el.classList.add('fade'); setTimeout(async()=>{ await fn(); el.classList.remove('fade'); }, 120); }
+
+function updateSelectorVisibility(){
+  const p = periodSel.value;
+  // Toggle selectors visibility
+  selDay.style.display = 'none';
+  selWeek.style.display = 'none';
+  selMonth.style.display = 'none';
+  selYear.style.display = 'none';
+  selCustom.style.display = 'none';
+  if(p==='day') selDay.style.display = 'inline-flex';
+  if(p==='week') selWeek.style.display = 'inline-flex';
+  if(p==='month') selMonth.style.display = 'inline-flex';
+  if(p==='year') selYear.style.display = 'inline-flex';
+  if(p==='custom') selCustom.style.display = 'inline-flex';
+
+  // Yearly extras: show heatmap and adjust layout/heights
+  const gridContainer = document.querySelector('.container.grid');
+  if(p==='year'){
+    heatmapSection.style.display = 'block';
+    // Increase chart areas to avoid being too small in yearly view
+    pieView.style.height = '66vh';
+    barView.style.height = '66vh';
+    // Reduce empty space between charts container and heatmap
+    if(gridContainer){ gridContainer.style.marginBottom = '6px'; }
+    heatmapSection.style.marginTop = '4px';
+    heatmapSection.style.paddingTop = '4px';
+    // Hide day timeline section in year view
+    if(dayTimelineSection) dayTimelineSection.style.display = 'none';
+  } else {
+    // Restore defaults for other periods
+    heatmapSection.style.display = 'none';
+    pieView.style.height = '58vh';
+    barView.style.height = '58vh';
+    if(gridContainer){ gridContainer.style.marginBottom = ''; }
+    heatmapSection.style.marginTop = '';
+    heatmapSection.style.paddingTop = '';
+    // Show day timeline section only for day period
+    if(dayTimelineSection) dayTimelineSection.style.display = (p==='day') ? 'block' : 'none';
+  }
+
+  // Show yearly granularity selector when year
+  document.getElementById('yearByWrap').style.display = (p==='year') ? 'inline-flex' : 'none';
+}
+
+function isoWeekToStartDate(weekStr){
+  if(!weekStr) return null;
+  const [y, w] = weekStr.split('-W');
+  const year = parseInt(y,10); const week = parseInt(w,10);
+  const jan4 = new Date(Date.UTC(year,0,4));
+  const dayOfWeek = (jan4.getUTCDay()+6)%7;
+  const mondayWeek1 = new Date(jan4); mondayWeek1.setUTCDate(jan4.getUTCDate()-dayOfWeek);
+  const monday = new Date(mondayWeek1); monday.setUTCDate(mondayWeek1.getUTCDate() + (week-1)*7);
+  return monday;
+}
+function ymd(d){ return d.toISOString().slice(0,10); }
+
+function computeRangeForSelection(){
+  const p = periodSel.value;
+  let start,end;
+  if(p==='day' && dayInput.value){
+    start = dayInput.value; end = dayInput.value;
+  } else if(p==='week' && weekInput.value){
+    const monday = isoWeekToStartDate(weekInput.value);
+    start = ymd(monday);
+    const sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate()+6); end = ymd(sunday);
+  } else if(p==='month' && monthInput.value){
+    const [y,m] = monthInput.value.split('-').map(n=>parseInt(n,10));
+    const first = new Date(Date.UTC(y,m-1,1));
+    const last = new Date(Date.UTC(y,m,0));
+    start = ymd(first); end = ymd(last);
+  } else if(p==='year' && yearInput.value){
+    const y = parseInt(yearInput.value,10);
+    start = `${y}-01-01`; end = `${y}-12-31`;
+  } else if(p==='custom' && customStart.value && customEnd.value){
+    start = customStart.value; end = customEnd.value;
+  } else {
+    start = ''; end = '';
+  }
+  return {start,end};
+}
+
+function shiftSelection(delta){
+  const p = periodSel.value;
+  if(p==='day'){
+    if(!dayInput.value){ dayInput.valueAsDate = new Date(); }
+    const d = new Date(dayInput.value); d.setDate(d.getDate()+delta); dayInput.valueAsDate = d;
+  } else if(p==='week'){
+    if(!weekInput.value){ return; }
+    const [y,w] = weekInput.value.split('-W'); const ny = Number(y); const nw = Number(w)+delta;
+    // Simple wrap: if nw<=0 or >53, adjust year
+    let cw = nw, cy = ny;
+    if(cw<=0){ cy--; cw = 52; }
+    if(cw>53){ cy++; cw = 1; }
+    weekInput.value = `${cy}-W${String(cw).padStart(2,'0')}`;
+  } else if(p==='month'){
+    if(!monthInput.value){ return; }
+    const [y,m] = monthInput.value.split('-').map(Number); const d = new Date(Date.UTC(y,m-1,1)); d.setUTCMonth(d.getUTCMonth()+delta);
+    monthInput.value = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;
+  } else if(p==='year'){
+    if(!yearInput.value){ return; }
+    yearInput.value = String(Number(yearInput.value)+delta);
+  } else if(p==='custom'){
+    if(!(customStart.value && customEnd.value)) return;
+    const s = new Date(customStart.value); const e = new Date(customEnd.value);
+    const days = Math.round((e - s)/86400000) + 1;
+    s.setDate(s.getDate()+days*delta); e.setDate(e.getDate()+days*delta);
+    customStart.value = ymd(s); customEnd.value = ymd(e);
+  }
+}
+
+function setQuick(period){
+  const now = new Date();
+  if(period==='today'){
+    periodSel.value = 'day'; updateSelectorVisibility(); dayInput.valueAsDate = now;
+  } else if(period==='week'){
+    periodSel.value = 'week'; updateSelectorVisibility();
+    // compute ISO week string
+    const tmp = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+    const dayNum = (tmp.getUTCDay() + 6) % 7; tmp.setUTCDate(tmp.getUTCDate() - dayNum + 3);
+    const firstThursday = new Date(Date.UTC(tmp.getUTCFullYear(),0,4));
+    const week = 1 + Math.round(((tmp.getTime() - firstThursday.getTime()) / 86400000 - 3 + ((firstThursday.getUTCDay()+6)%7)) / 7);
+    weekInput.value = `${tmp.getUTCFullYear()}-W${String(week).padStart(2,'0')}`;
+  } else if(period==='month'){
+    periodSel.value = 'month'; updateSelectorVisibility();
+    monthInput.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  } else if(period==='year'){
+    periodSel.value = 'year'; updateSelectorVisibility(); yearInput.value = String(now.getFullYear());
+  }
+}
+
+function colorFor(index){ const hue = Math.floor((index*137.508)%360); return `hsl(${hue} 65% 55% / 0.9)`; }
+
+function buildLegend(panel, chartInstance){
+  panel.innerHTML = '';
+  const list = document.createElement('div');
+  (chartInstance.data.datasets||[]).forEach((ds, i)=>{
+    const row = document.createElement('label'); row.className = 'legend-item';
+    const sw = document.createElement('span'); sw.className='legend-swatch'; sw.style.background = ds.backgroundColor||ds.borderColor||colorFor(i);
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = !chartInstance.isDatasetVisible || chartInstance.isDatasetVisible(i) !== false; // Chart.js v4 visible by default
+    cb.addEventListener('change', ()=>{
+      const vis = cb.checked;
+      if(chartInstance.config.type==='pie'){
+        // For pie, toggle segment by dataset visibility (single dataset) – we will filter data instead
+        chartInstance.toggleDataVisibility(i); // if using per-index
+      } else {
+        chartInstance.setDatasetVisibility(i, vis);
+      }
+      chartInstance.update();
+    });
+    const txt = document.createElement('span'); txt.textContent = (ds.label || `Série ${i+1}`); txt.style.flex='1';
+    row.appendChild(sw); row.appendChild(cb); row.appendChild(txt);
+    list.appendChild(row);
+  });
+  panel.appendChild(list);
+}
+
+async function load(){
+  const p = periodSel.value; const {start,end} = computeRangeForSelection();
+  const qs = new URLSearchParams({period:p}); if(start&&end){ qs.set('start',start); qs.set('end',end); }
+  const res = await fetch(`/api/summary?`+qs.toString()); const data = await res.json();
+  rangeEl.textContent = `Du ${data.start} au ${data.end}`; const items = data.items;
+  const totalSec = (items||[]).reduce((sum,it)=>sum + (Number(it.seconds)||0), 0);
+  totalEl.textContent = `Total: ${fmtHM(totalSec)}`;
+  // update sidebar list
+  loadGamesMetaSidebar(p, data.start, data.end, items);
+
+  // pie
+  const ctx = document.getElementById('pieCanvas');
+  const labels = items.map(i=>i.name);
+  const values = items.map(i=>i.seconds);
+  if(chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'pie',
+    data: { labels, datasets: [{ data: values, backgroundColor: labels.map((_,i)=>colorFor(i)) }] },
+    options: { responsive: true, maintainAspectRatio: false, animation:{ duration: 250 },
+      plugins: { title: { display: true, text: periodTitle(periodSel.value, data.start, data.end) } }
+    }
+  });
+  // Build floating legend for pie (one dataset with multiple segments): create faux dataset controls
+  legendPanelPie.innerHTML = '';
+  labels.forEach((name, i)=>{
+    const row = document.createElement('label'); row.className = 'legend-item';
+    const sw = document.createElement('span'); sw.className='legend-swatch'; sw.style.background = colorFor(i);
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = chart.getDataVisibility(i);
+    cb.addEventListener('change', ()=>{ chart.toggleDataVisibility(i); chart.update(); });
+    const txt = document.createElement('span'); txt.textContent = name; txt.style.flex='1';
+    row.appendChild(sw); row.appendChild(cb); row.appendChild(txt);
+    legendPanelPie.appendChild(row);
+  });
+}
+
+async function loadHeatmap(){
+  const {start,end} = computeRangeForSelection();
+  // derive year
+  let year = new Date().getFullYear();
+  if(periodSel.value==='year'){
+    if(yearInput.value) year = parseInt(yearInput.value,10);
+    else if(start) year = parseInt((start||'').slice(0,4),10);
+  }
+  const res = await fetch(`/api/calendar?year=${year}`);
+  const data = await res.json();
+  buildHeatmap(year, data.days||[]);
+  // clear detail when reloading heatmap
+  if(heatDetail) heatDetail.innerHTML = '';
+}
+
+async function loadBar(){
+  const p = periodSel.value; const {start,end} = computeRangeForSelection();
+  const qs = new URLSearchParams({period:p}); if(start&&end){ qs.set('start',start); qs.set('end',end); }
+  if(p==='year') { const by = document.getElementById('yearGranularity').value || 'month'; qs.set('by', by); }
+  const res = await fetch(`/api/series?`+qs.toString()); const data = await res.json();
+  rangeEl.textContent = `Du ${data.start} au ${data.end}`; const labels = data.labels; const games = data.games; const matrix = data.matrix;
+  const totalSec = (matrix||[]).reduce((sum,row)=> sum + row.reduce((s,v)=>s+(Number(v)||0),0), 0);
+  totalEl.textContent = `Total: ${fmtHM(totalSec)}`;
+  // build pseudo items from matrix totals to order the sidebar similarly
+  const items = (games||[]).map((g,i)=>({ name: g, seconds: (matrix[i]||[]).reduce((s,v)=>s+(Number(v)||0),0) }));
+  loadGamesMetaSidebar(p, data.start, data.end, items);
+  const datasets = games.map((g, i)=>{
+    const color = colorFor(i);
+    return { label: g, data: matrix[i].map(v=>v/3600), backgroundColor: color, stack: 'stack1' };
+  });
+  if(chart) chart.destroy();
+  const ctx = document.getElementById('barCanvas');
+  chart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation:{ duration: 250 },
+      plugins: {
+        title: { display: true, text: periodTitle(periodSel.value, data.start, data.end) },
+        tooltip: { callbacks: { label: (ctx)=>`${ctx.dataset.label}: ${fmtHM((ctx.raw||0)*3600)}` } },
+        legend: { display: false }
+      },
+      scales: { x: { stacked: true }, y: { stacked: true, title:{display:true, text:'Heures'}, ticks:{ callback:(v)=>v } } }
+    }
+  });
+  // Build floating legend for bar (per dataset)
+  buildLegend(legendPanelBar, chart);
+}
+
+const viewPieBtn = document.getElementById('viewPie');
+const viewBarBtn = document.getElementById('viewBar');
+
+function updateViewButtons(active){
+  // Remove primary style from both, then set on active
+  viewPieBtn.classList.remove('btn-primary');
+  viewBarBtn.classList.remove('btn-primary');
+  if(active==='pie') viewPieBtn.classList.add('btn-primary');
+  if(active==='bar') viewBarBtn.classList.add('btn-primary');
+}
+
+function showPie(){
+  pieView.classList.remove('hidden');
+  barView.classList.add('hidden');
+  // keep heatmap visible when period is year (updateSelectorVisibility handles display)
+  if(periodGames) periodGames.style.display = '';
+  updateViewButtons('pie');
+  if(chart){ chart.resize(); }
+}
+function showBar(){
+  pieView.classList.add('hidden');
+  barView.classList.remove('hidden');
+  // keep heatmap visible when period is year (updateSelectorVisibility handles display)
+  if(periodGames) periodGames.style.display = '';
+  updateViewButtons('bar');
+  if(chart){ chart.resize(); }
+}
+
+periodSel.addEventListener('change', ()=>{ updateSelectorVisibility();
+  if(periodSel.value==='year'){ loadHeatmap(); }
+  if(periodSel.value==='day'){ const d = dayInput.value || computeRangeForSelection().start; if(d){ renderDayTimeline(d); } }
+  if(!barView.classList.contains('hidden')) withFade(barView, loadBar); else withFade(pieView, load);
+});
+// Reload bars when granularity changes
+const yearGranSel = document.getElementById('yearGranularity');
+yearGranSel.addEventListener('change', ()=>{ if(periodSel.value==='year' && !barView.classList.contains('hidden')) withFade(barView, loadBar); });
+['dayInput','weekInput','monthInput','yearInput','customStart','customEnd'].forEach(id=>{
+  const el = document.getElementById(id); if(!el) return; el.addEventListener('change', ()=>{
+    if(periodSel.value==='year'){ loadHeatmap(); }
+    if(periodSel.value==='day'){ const d = dayInput.value || computeRangeForSelection().start; if(d){ renderDayTimeline(d); } }
+    if(!barView.classList.contains('hidden')) withFade(barView, loadBar); else withFade(pieView, load);
+  });
+});
+
+viewPieBtn.addEventListener('click', ()=>{ showPie(); withFade(pieView, load); });
+viewBarBtn.addEventListener('click', ()=>{ showBar(); withFade(barView, loadBar); });
+
+document.getElementById('prevBtn').addEventListener('click', ()=>{ shiftSelection(-1); if(periodSel.value==='year'){ loadHeatmap(); } if(periodSel.value==='day'){ const d = dayInput.value || computeRangeForSelection().start; if(d){ renderDayTimeline(d); } } if(!barView.classList.contains('hidden')) withFade(barView, loadBar); else withFade(pieView, load); });
+document.getElementById('nextBtn').addEventListener('click', ()=>{ shiftSelection(1); if(periodSel.value==='year'){ loadHeatmap(); } if(periodSel.value==='day'){ const d = dayInput.value || computeRangeForSelection().start; if(d){ renderDayTimeline(d); } } if(!barView.classList.contains('hidden')) withFade(barView, loadBar); else withFade(pieView, load); });
+
+document.getElementById('todayBtn').addEventListener('click', ()=>{ setQuick('today'); if(periodSel.value==='year'){ loadHeatmap(); } if(periodSel.value==='day'){ const d = dayInput.value || computeRangeForSelection().start; if(d){ renderDayTimeline(d); } } if(!barView.classList.contains('hidden')) withFade(barView, loadBar); else withFade(pieView, load); });
+document.getElementById('thisWeekBtn').addEventListener('click', ()=>{ setQuick('week'); if(periodSel.value==='year'){ loadHeatmap(); } if(periodSel.value==='day'){ const d = dayInput.value || computeRangeForSelection().start; if(d){ renderDayTimeline(d); } } if(!barView.classList.contains('hidden')) withFade(barView, loadBar); else withFade(pieView, load); });
+document.getElementById('thisMonthBtn').addEventListener('click', ()=>{ setQuick('month'); if(periodSel.value==='year'){ loadHeatmap(); } if(periodSel.value==='day'){ const d = dayInput.value || computeRangeForSelection().start; if(d){ renderDayTimeline(d); } } if(!barView.classList.contains('hidden')) withFade(barView, loadBar); else withFade(pieView, load); });
+document.getElementById('thisYearBtn').addEventListener('click', ()=>{ setQuick('year'); if(periodSel.value==='year'){ loadHeatmap(); } if(periodSel.value==='day'){ const d = dayInput.value || computeRangeForSelection().start; if(d){ renderDayTimeline(d); } } if(!barView.classList.contains('hidden')) withFade(barView, loadBar); else withFade(pieView, load); });
+
+// Legend toggles
+const legendToggle = document.getElementById('legendToggle');
+legendToggle.addEventListener('click', ()=>{ legendPanelPie.style.display = legendPanelPie.style.display==='block'?'none':'block'; });
+const legendToggleBar = document.getElementById('legendToggleBar');
+legendToggleBar.addEventListener('click', ()=>{ legendPanelBar.style.display = legendPanelBar.style.display==='block'?'none':'block'; });
+
+// initialize defaults to current date
+(function initDefaults(){
+  const now = new Date();
+  dayInput.valueAsDate = now;
+  const tmp = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const dayNum = (tmp.getUTCDay() + 6) % 7; tmp.setUTCDate(tmp.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(tmp.getUTCFullYear(),0,4));
+  const week = 1 + Math.round(((tmp.getTime() - firstThursday.getTime()) / 86400000 - 3 + ((firstThursday.getUTCDay()+6)%7)) / 7);
+  weekInput.value = `${tmp.getUTCFullYear()}-W${String(week).padStart(2,'0')}`;
+  monthInput.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  yearInput.value = String(now.getFullYear());
+  customStart.value = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
+  customEnd.value = ymd(new Date(now.getFullYear(), now.getMonth()+1, 0));
+  updateSelectorVisibility();
+})();
+
+// initial load
+load();
+if(periodSel.value==='year'){ loadHeatmap(); }
+if(periodSel.value==='day'){ const d = dayInput.value || computeRangeForSelection().start; if(d){ renderDayTimeline(d); } }
+
+function fmtTimeOfDay(sec){
+  const h = Math.floor(sec/3600);
+  const m = Math.floor((sec%3600)/60);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+function fmtTimeFR(sec){
+  const h = Math.floor(sec/3600);
+  const m = Math.floor((sec%3600)/60);
+  return `${String(h).padStart(2,'0')}h${String(m).padStart(2,'0')}`;
+}
+
+function getCfgTZ(){ try{ return localStorage.getItem('cfgTimezone') || ''; }catch(e){ return ''; } }
+async function renderDayTimeline(date){
+  try{
+    const tz = encodeURIComponent(getCfgTZ());
+    const url = `/api/day_timeline?date=${date}` + (tz ? `&tz=${tz}` : '');
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const segs = data.segments||[];
+    // Build timeline 0-24h with segments, ticks and labels
+    const container = document.createElement('div');
+    container.style.border = '1px solid var(--border)';
+    container.style.borderRadius = '10px';
+    container.style.padding = '10px';
+
+    const title = document.createElement('div');
+    title.innerHTML = `<b>${formatDateFR(date)}</b> — ${segs.length? 'Périodes de jeu' : 'Aucune activité'}`;
+    title.style.marginBottom = '10px';
+
+    // Wrapper to hold bar and overlayed labels
+    const wrap = document.createElement('div');
+    wrap.style.position = 'relative';
+
+    const bar = document.createElement('div');
+    bar.style.position='relative';
+    bar.style.height='26px'; // thicker bar for readability
+    bar.style.border='1px solid var(--border)';
+    bar.style.borderRadius='999px';
+    bar.style.background='linear-gradient(90deg, #00000007 0%, #00000007 100%)';
+    bar.style.overflow='hidden';
+
+    // Hourly ticks overlay
+    const ticks = document.createElement('div');
+    ticks.style.position='absolute';
+    ticks.style.left='0'; ticks.style.right='0';
+    ticks.style.top='0'; ticks.style.bottom='0';
+    ticks.style.pointerEvents='none';
+    for(let h=0; h<=24; h++){
+      const t = document.createElement('div');
+      t.style.position='absolute';
+      t.style.left = (h/24*100)+'%';
+      t.style.top='0';
+      t.style.bottom='0';
+      t.style.width = h%3===0 ? '2px' : '1px';
+      t.style.background = 'var(--border)';
+      t.style.opacity = h%3===0 ? '0.6' : '0.35';
+      ticks.appendChild(t);
+    }
+
+    // Determine unique games and assign colors consistently
+    const games = Array.from(new Set(segs.map(s=>s.name)));
+    const colorMap = {};
+    games.forEach((g,i)=>{ colorMap[g] = colorFor(i); });
+
+    // Tooltip (reuse global heatmapTT)
+    const tt = document.getElementById('heatmapTT');
+
+    // Add segments as absolutely positioned spans with labels
+    const placedLabelBoxes = [];
+    segs.forEach((s)=>{
+      const leftPct = (s.start_sec/86400)*100;
+      const widthPct = ((s.end_sec - s.start_sec)/86400)*100;
+      const seg = document.createElement('div');
+      seg.style.position='absolute';
+      seg.style.left = leftPct+'%';
+      seg.style.width = widthPct+'%';
+      seg.style.top = '0';
+      seg.style.bottom = '0';
+      seg.style.background = colorMap[s.name] || '#6ee7b7';
+      seg.style.borderRadius = '999px';
+      seg.style.cursor = 'pointer';
+
+      // Tooltip handlers
+      seg.addEventListener('mouseenter', (e)=>{
+        if(!tt) return;
+        tt.innerHTML = `<b>${s.name}</b><br>${fmtTimeOfDay(s.start_sec)} → ${fmtTimeOfDay(s.end_sec)} (${fmtHM(s.end_sec - s.start_sec)})`;
+        tt.style.display='block';
+      });
+      seg.addEventListener('mousemove', (e)=>{
+        if(!tt) return; const pad=12; tt.style.left=(e.pageX+pad)+'px'; tt.style.top=(e.pageY+pad)+'px';
+      });
+      seg.addEventListener('mouseleave', ()=>{ if(tt) tt.style.display='none'; });
+
+      bar.appendChild(seg);
+
+      // Label rules: show a single condensed label centered, unless duration < 15min, and avoid overlap
+      const durationSec = (s.end_sec - s.start_sec);
+      if(durationSec >= 900) {
+        const centerPct = leftPct + widthPct/2;
+        const lbl = document.createElement('div');
+        lbl.textContent = `${fmtTimeFR(s.start_sec)} – ${fmtTimeFR(s.end_sec)}`;
+        lbl.style.position = 'absolute';
+        lbl.style.top = '-18px';
+        lbl.style.left = centerPct+'%';
+        lbl.style.transform = 'translateX(-50%)';
+        lbl.style.fontSize='11px';
+        lbl.style.color='var(--muted)';
+        lbl.style.whiteSpace = 'nowrap';
+        lbl.style.visibility = 'hidden'; // measure first
+        wrap.appendChild(lbl);
+        // measure and decide overlap
+        const wrapRect = wrap.getBoundingClientRect();
+        const lblRect = lbl.getBoundingClientRect();
+        const half = lblRect.width/2;
+        const centerPx = wrapRect.width * centerPct / 100;
+        const box = {l: centerPx - half, r: centerPx + half};
+        const overlaps = placedLabelBoxes.some(b => Math.max(b.l, box.l) < Math.min(b.r, box.r));
+        if(overlaps){
+          wrap.removeChild(lbl);
+        } else {
+          lbl.style.visibility = 'visible';
+          placedLabelBoxes.push(box);
+        }
+      }
+    });
+
+    // Ruler labels under the bar (every 3h)
+    const ruler = document.createElement('div');
+    ruler.style.position='relative';
+    ruler.style.height='16px';
+    ruler.style.marginTop='6px';
+    const marks = [0,3,6,9,12,15,18,21,24];
+    marks.forEach(h=>{
+      const lab = document.createElement('div');
+      lab.textContent = `${h}h`;
+      lab.style.position='absolute';
+      lab.style.left = (h/24*100)+'%';
+      lab.style.transform='translateX(-50%)';
+      lab.style.fontSize='11px';
+      lab.style.color='var(--muted)';
+      ruler.appendChild(lab);
+    });
+
+    // Assemble
+    wrap.appendChild(bar);
+    wrap.appendChild(ticks);
+    container.appendChild(title);
+    container.appendChild(wrap);
+    container.appendChild(ruler);
+
+    // Legend
+    const legend = document.createElement('div');
+    legend.style.display='flex';
+    legend.style.flexWrap='wrap';
+    legend.style.gap='8px';
+    legend.style.marginTop='10px';
+    games.forEach((g)=>{
+      const item = document.createElement('span');
+      item.style.display='inline-flex';
+      item.style.alignItems='center';
+      item.style.gap='6px';
+      const sw = document.createElement('span');
+      sw.style.width='12px'; sw.style.height='12px'; sw.style.borderRadius='3px';
+      sw.style.background = colorMap[g];
+      const tx = document.createElement('span'); tx.textContent = g;
+      item.appendChild(sw); item.appendChild(tx);
+      legend.appendChild(item);
+    });
+
+    const target = (typeof periodSel !== 'undefined' && periodSel && periodSel.value === 'day' && typeof dayDetail !== 'undefined' && dayDetail) ? dayDetail : heatDetail;
+    if(target){
+      target.innerHTML = '';
+      target.appendChild(container);
+      if(games.length) target.appendChild(legend);
+    }
+  }catch(e){
+    const target = (typeof periodSel !== 'undefined' && periodSel && periodSel.value === 'day' && typeof dayDetail !== 'undefined' && dayDetail) ? dayDetail : heatDetail;
+    if(target) target.textContent = 'Erreur lors du chargement de la journée.';
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Historique des jeux</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+#list table { border-collapse: collapse; width: 100%; }
+#list th, #list td { border: 1px solid #ddd; padding: 8px; }
+#list th { background: #f3f3f3; cursor: pointer; user-select: none; }
+#list th.sort-asc::after { content: " \25B2"; }
+#list th.sort-desc::after { content: " \25BC"; }
+.actions button { margin-right: 6px; }
+header a { margin-right: 12px; }
+.badge { display:inline-block; padding:2px 6px; border-radius:4px; background:#e0e0e0; font-size:12px; margin-left:8px; }
+.check { color: #2e7d32; margin-left:6px; }
+.bl { color:#b71c1c; font-weight:600; }
+tr.blacklisted { background: #ffebee; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">Tableau de bord</a>
+  <a href="/config">Configuration</a>
+  <h1>Historique</h1>
+</header>
+<div style="margin:10px 0 20px 0;">
+  <label><input type="checkbox" id="hideBL"> Masquer les jeux black‑listés</label>
+</div>
+<section id="list">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+    <div></div>
+    <div>Par page: 
+      <select id="pageSize">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="200">200</option>
+      </select>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th data-key="start_time">Début</th>
+        <th data-key="end_time">Fin</th>
+        <th data-key="seconds">Durée (hh:mm)</th>
+        <th data-key="name">Jeu</th>
+        <th data-key="date">Date</th>
+        <th>Statut</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="body"></tbody>
+  </table>
+  <div id="pager" style="display:flex; gap:8px; align-items:center; justify-content:center; margin-top:10px; flex-wrap:wrap;"></div>
+</section>
+<script>
+function fmtHM(seconds){
+  const m = Math.floor(seconds/60); const h = Math.floor(m/60); const mm = (m%60).toString().padStart(2,'0');
+  return `${h}:${mm}`;
+}
+// --- Fuseau horaire affichage ---
+function getCfgTZ(){ try{ return localStorage.getItem('cfgTimezone') || ''; }catch(e){ return ''; } }
+function fmtRFCToTZ(rfc){
+  if(!rfc) return '';
+  const tz = getCfgTZ();
+  const d = new Date(rfc);
+  const opts = { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false, timeZone: tz || undefined };
+  const parts = new Intl.DateTimeFormat('fr-FR', opts).formatToParts(d);
+  const get = (t)=> (parts.find(p=>p.type===t)||{}).value || '';
+  const y = get('year'); const m = get('month'); const da = get('day'); const hh = get('hour'); const mm = get('minute');
+  return `${y}-${m}-${da} ${hh}:${mm}`;
+}
+
+let ITEMS = [];
+let sortKey = 'start_time';
+let sortDir = 'desc';
+let hideBL = false;
+let currentPage = 1;
+let pageSize = 50;
+
+function render(){
+  const body = document.getElementById('body');
+  body.innerHTML = '';
+  const data = [...ITEMS].sort((a,b)=>{
+    const k = sortKey;
+    let va = a[k], vb = b[k];
+    if(k==='name') { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
+    if(k==='seconds' || k==='sessions') { va = Number(va)||0; vb = Number(vb)||0; }
+    // last_date compare strings YYYY-MM-DD works lexicographically
+    if(va<vb) return sortDir==='asc' ? -1 : 1;
+    if(va>vb) return sortDir==='asc' ? 1 : -1;
+    return 0;
+  });
+  const total = data.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  if(currentPage > pages) currentPage = pages;
+  const startIdx = (currentPage-1)*pageSize;
+  const endIdx = Math.min(total, startIdx + pageSize);
+  const pageData = data.slice(startIdx, endIdx);
+  pageData.forEach(it=>{
+    const tr = document.createElement('tr');
+    if(it.blacklisted) tr.classList.add('blacklisted');
+    const finishedBadge = it.finished ? '<span class="check" title="Jeu terminé">✔️</span>' : '';
+    const blBadge = it.blacklisted ? '<span class="bl" title="Black-listé">BL</span>' : '';
+    tr.innerHTML = `<td>${fmtRFCToTZ(it.start_time||'')}</td>`+
+                   `<td>${fmtRFCToTZ(it.end_time||'')}</td>`+
+                   `<td>${fmtHM(it.seconds||0)}</td>`+
+                   `<td>${it.name}<div class="small">(${it.original||it.name})</div></td>`+
+                   `<td>${it.date||''}</td>`+
+                   `<td>${finishedBadge} ${blBadge}</td>`;
+    const actions = document.createElement('td');
+    actions.className = 'actions';
+    const rn = document.createElement('button'); rn.textContent = 'Renommer'; rn.onclick = ()=>rename(it.name);
+    const done = document.createElement('button'); done.textContent = it.finished ? 'Reprendre' : 'Jeu terminé'; done.onclick = ()=>toggleFinished(it.name);
+    const del = document.createElement('button'); del.textContent = 'Supprimer'; del.onclick = ()=>deleteEntry(it);
+    actions.appendChild(rn); actions.appendChild(done); actions.appendChild(del); tr.appendChild(actions);
+    body.appendChild(tr);
+  });
+  renderPager(total, pages, startIdx, endIdx);
+}
+
+function initSorting(){
+  const ths = document.querySelectorAll('thead th[data-key]');
+  ths.forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const key = th.getAttribute('data-key');
+      if(sortKey===key){ sortDir = (sortDir==='asc'?'desc':'asc'); }
+      else { sortKey = key; sortDir = (key==='name'?'asc':'desc'); }
+      ths.forEach(x=>x.classList.remove('sort-asc','sort-desc'));
+      th.classList.add(sortDir==='asc'?'sort-asc':'sort-desc');
+      render();
+    });
+  });
+  // initial indicator
+  const initTh = document.querySelector(`thead th[data-key="${sortKey}"]`);
+  if(initTh) initTh.classList.add('sort-desc');
+}
+
+async function load(){
+  const url = hideBL ? '/api/history?hide_blacklisted=1' : '/api/history';
+  const res = await fetch(url);
+  ITEMS = await res.json();
+  currentPage = 1;
+  render();
+}
+
+function renderPager(total, pages, startIdx, endIdx){
+  const pager = document.getElementById('pager');
+  pager.innerHTML = '';
+  const info = document.createElement('span'); info.textContent = `${total===0?0:(startIdx+1)}–${endIdx} sur ${total}`;
+  const prev = document.createElement('button'); prev.textContent = '⟨'; prev.disabled = currentPage<=1; prev.onclick = ()=>{ currentPage--; render(); };
+  const next = document.createElement('button'); next.textContent = '⟩'; next.disabled = currentPage>=pages; next.onclick = ()=>{ currentPage++; render(); };
+  pager.appendChild(prev);
+  // Optionally small page numbers (limit to first few/last few)
+  const maxButtons = 7; const half = Math.floor(maxButtons/2);
+  let start = Math.max(1, currentPage - half);
+  let end = Math.min(pages, start + maxButtons - 1);
+  start = Math.max(1, Math.min(start, end - maxButtons + 1));
+  for(let i=start;i<=end;i++){
+    const b = document.createElement('button'); b.textContent = String(i); if(i===currentPage){ b.disabled=true; }
+    b.onclick = ()=>{ currentPage = i; render(); };
+    pager.appendChild(b);
+  }
+  pager.appendChild(next);
+  pager.appendChild(info);
+}
+
+function initPageSize(){
+  const sel = document.getElementById('pageSize');
+  try { const saved = parseInt(localStorage.getItem('histPageSize')||'50',10); if([25,50,100,200].includes(saved)) pageSize = saved; } catch(e) {}
+  sel.value = String(pageSize);
+  sel.addEventListener('change', ()=>{
+    pageSize = parseInt(sel.value,10) || 50;
+    try { localStorage.setItem('histPageSize', String(pageSize)); } catch(e) {}
+    currentPage = 1; render();
+  });
+}
+
+async function blacklist(name){
+  if(!confirm(`Blacklister "${name}" ?`)) return;
+  const res = await fetch('/api/blacklist', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name}) });
+  if(!res.ok){ alert('Erreur blacklist'); return; }
+  load();
+}
+
+async function unblacklist(name){
+  if(!confirm(`Retirer de la blacklist "${name}" ?`)) return;
+  const res = await fetch('/api/unblacklist', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name}) });
+  if(!res.ok){ alert('Erreur suppression blacklist'); return; }
+  load();
+}
+
+async function rename(from){
+  const to = prompt('Nouveau nom pour ce jeu:', from);
+  if(!to || to===from) return;
+  const res = await fetch('/api/rename', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({from, to}) });
+  if(!res.ok){ alert('Erreur renommage'); return; }
+  load();
+}
+
+async function toggleFinished(name){
+  const res = await fetch('/api/finished', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name}) });
+  if(!res.ok){ alert('Erreur mise à jour terminé'); return; }
+  load();
+}
+
+async function deleteEntry(it){
+  const msg = 'ATTENTION, vous allez écraser une entrée de l\'historique que vous ne pourrez pas récupérer, voulez vous vraiment continuer ?';
+  if(!confirm(msg)) return;
+  const process_name = it.original || it.name;
+  const payload = { process_name, start_time: it.start_time, end_time: it.end_time };
+  const res = await fetch('/api/history_delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  if(!res.ok){ alert('Erreur suppression'); return; }
+  load();
+}
+
+function initHideBL(){
+  const el = document.getElementById('hideBL');
+  // load preference
+  try { hideBL = localStorage.getItem('hideBL') === '1'; } catch(e) { hideBL = false; }
+  el.checked = hideBL;
+  el.addEventListener('change', ()=>{
+    hideBL = el.checked;
+    try { localStorage.setItem('hideBL', hideBL ? '1' : '0'); } catch(e) {}
+    load();
+  });
+}
+
+initSorting();
+initHideBL();
+initPageSize();
+load();
+
+</script>
+</body>
+</html>
