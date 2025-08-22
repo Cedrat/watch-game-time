@@ -6,7 +6,9 @@ import (
 	"main/entity"
 	"main/manager"
 	"main/query"
+	"main/web"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -33,6 +35,7 @@ func onReady() {
 	go mainProgram()
 
 	// Ajouter des éléments de menu
+	mOpenWeb := systray.AddMenuItem("Ouvrir l'interface Web", "Ouvrir http://localhost:8080 dans le navigateur")
 	mQuit := systray.AddMenuItem("Quitter", "Quitter l'application")
 	mInfo := systray.AddMenuItem("À propos", "Informations sur l'application")
 
@@ -40,6 +43,8 @@ func onReady() {
 	go func() {
 		for {
 			select {
+			case <-mOpenWeb.ClickedCh:
+				_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", "http://localhost:8080").Start()
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				return
@@ -73,6 +78,8 @@ func mainProgram() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Start web server
+	go web.StartServer(db, lm)
 	for {
 		processes, _ := process.Processes()
 		time.Sleep(1 * time.Second)
