@@ -42,6 +42,12 @@ func NewListManager(db *sqlx.DB) (*ListManager, error) {
 		}
 	}
 
+	// Charger la whitelist par défaut si elle est vide en base
+	var whitelistCount int
+	if err := db.Get(&whitelistCount, "SELECT COUNT(*) FROM whitelist"); err == nil && whitelistCount == 0 {
+		_, _ = db.Exec("INSERT OR IGNORE INTO whitelist (name) VALUES (?)", "steamapps")
+	}
+
 	// Charger les listes initiales
 	if err := lm.RefreshLists(); err != nil {
 		return nil, err

@@ -26,8 +26,8 @@ func (db *Database) GetDbVersion() (int, error) {
 
 func (db *Database) TableExists(tableName string) (bool, error) {
 	query := `
-		SELECT count(name) 
-		FROM sqlite_master 
+		SELECT count(name)
+		FROM sqlite_master
 		WHERE type='table' AND name=?
 	`
 
@@ -41,28 +41,18 @@ func (db *Database) TableExists(tableName string) (bool, error) {
 }
 
 func getPathFileData() string {
-	// Méthode 1: Utiliser la variable d'environnement APPDATA directement
-	appData := os.Getenv("APPDATA")
-	fmt.Println("Chemin APPDATA:", appData)
-
-	// Méthode 2: Utiliser UserConfigDir() (Go 1.13+)
+	// Utilise le dossier standard des configurations utilisateur (AppData/Roaming sur Windows)
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		fmt.Println("Erreur lors de la récupération du dossier de configuration:", err)
-	} else {
-		fmt.Println("Dossier de configuration utilisateur:", configDir)
+		// Fallback sur le dossier local si erreur
+		return "."
 	}
 
-	// Exemple: Créer un chemin vers un dossier spécifique dans APPDATA
-	monAppDir := filepath.Join(appData, ".steam_watcher")
+	monAppDir := filepath.Join(configDir, "SteamTracker")
 
 	// Créer le dossier si nécessaire
-	err = os.MkdirAll(monAppDir, 0755)
-	if err != nil {
-		fmt.Println("Erreur lors de la création du dossier:", err)
-	} else {
-		fmt.Println("Dossier application créé:", monAppDir)
-	}
+	_ = os.MkdirAll(monAppDir, 0755)
+
 	return monAppDir
 }
 
@@ -202,7 +192,7 @@ func (db *Database) updateDb() error {
 		CREATE TABLE IF NOT EXISTS whitelist (
 			name TEXT PRIMARY KEY
 		);
-	
+
 		CREATE TABLE IF NOT EXISTS blacklist (
 			name TEXT PRIMARY KEY
 		);
