@@ -9,6 +9,8 @@ import (
 	"main/web"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,6 +82,10 @@ func mainProgram() {
 	}
 	// Start web server
 	go web.StartServer(db, lm)
+
+	// Tenter de renommer les processus déjà en cours au lancement
+	processMonitor.RunGlobalRename()
+
 	for {
 		processes, _ := process.Processes()
 		time.Sleep(1 * time.Second)
@@ -220,19 +226,75 @@ func formatDuration(d time.Duration) string {
 func (pm *ProcessMonitor) processCheck(p *process.Process, listManager *manager.ListManager) {
 	path, err := p.Exe()
 	if err != nil {
-		fmt.Println(err)
+		return
 	}
-	// Extraire le nom du programme à partir du chemin
 
 	// Vérifier d'abord si le programme est dans la blacklist
 	if listManager.IsBlacklisted(path) {
-		fmt.Printf("Programme blacklisté ignoré: %s\n", path)
 		return
 	}
 
 	// Ensuite vérifier s'il est dans la whitelist
 	if listManager.IsWhitelisted(path) {
+		// --- Renommage automatique ---
+		originalName, _ := p.Name()
+		if originalName != "" {
+			// On nettoie l'extension .exe pour le stockage et la recherche
+			cleanOriginal := strings.TrimSuffix(originalName, filepath.Ext(originalName))
+
+			// On cherche un nom "propre" via les métadonnées de l'exécutable (ProductName/FileDescription)
+			friendlyName := GetFriendlyName(path)
+
+			if friendlyName != "" && friendlyName != cleanOriginal {
+				// On enregistre dans la map de renommage (nom avec .exe)
+				pm.db.UpsertRename(originalName, friendlyName)
+				// On enregistre aussi la version sans .exe par sécurité pour l'affichage
+				pm.db.UpsertRename(cleanOriginal, friendlyName)
+			}
+		}
+
 		pm.StartTracking(p.Pid)
 		return
+	}
+}
+
+// RunGlobalRename parcourt tous les processus actifs et tente de les renommer proprement en base.
+// Elle effectue également un nettoyage des noms existants dans la base de données.
+func (pm *ProcessMonitor) RunGlobalRename() {
+	// 1. Nettoyage initial de la base (enlève les .exe quand display_name == original_name)
+	if err := pm.db.CleanupProcessNames(); err != nil {
+		fmt.Printf("[AutoRename] Erreur lors du nettoyage de la base: %v\n", err)
+	}
+
+	// 2. Scan des processus en cours pour trouver des noms propres via les fichiers
+	processes, _ := process.Processes()
+	count := 0
+	for _, p := range processes {
+		if p == nil {
+			continue
+		}
+		path, err := p.Exe()
+		if err != nil {
+			continue
+		}
+
+		name, _ := p.Name()
+		if name == "" {
+			continue
+		}
+
+		friendly := GetFriendlyName(path)
+		cleanOrig := strings.TrimSuffix(name, filepath.Ext(name))
+
+		// Si on a trouvé un nom riche (ProductName/FileDescription) différent du nom de fichier
+		if friendly != "" && friendly != name && friendly != cleanOrig {
+			pm.db.UpsertRename(name, friendly)
+			pm.db.UpsertRename(cleanOrig, friendly)
+			count++
+		}
+	}
+
+	if count > 0 {
+		fmt.Printf("[AutoRename] %d processus actifs ont été renommés avec succès.\n", count)
 	}
 }
