@@ -185,6 +185,94 @@
         </section>
 
         <section class="card">
+            <h2>Statistiques & Sessions</h2>
+            <div
+                class="controls"
+                style="
+                    display: flex;
+                    flex-direction: column;
+                    gap: 16px;
+                    align-items: flex-start;
+                "
+            >
+                <label
+                    style="
+                        display: flex;
+                        flex-direction: column;
+                        gap: 4px;
+                        width: 100%;
+                    "
+                >
+                    <span class="small" style="font-weight: 600"
+                        >Durée minimale d'une session (secondes)</span
+                    >
+                    <input
+                        type="number"
+                        id="cfgMinSession"
+                        value="60"
+                        min="0"
+                        step="1"
+                        style="width: 100px"
+                    />
+                    <span class="small"
+                        >Les sessions plus courtes que ce délai seront ignorées
+                        dans les statistiques détaillées.</span
+                    >
+                </label>
+
+                <label
+                    style="
+                        display: flex;
+                        flex-direction: column;
+                        gap: 4px;
+                        width: 100%;
+                    "
+                >
+                    <span class="small" style="font-weight: 600"
+                        >Délai de fusion maximal (secondes)</span
+                    >
+                    <input
+                        type="number"
+                        id="cfgMaxGap"
+                        value="300"
+                        min="0"
+                        step="1"
+                        style="width: 100px"
+                    />
+                    <span class="small"
+                        >Si deux sessions sont séparées par moins que ce délai,
+                        elles seront fusionnées.</span
+                    >
+                </label>
+
+                <label
+                    style="
+                        display: flex;
+                        flex-direction: column;
+                        gap: 4px;
+                        width: 100%;
+                    "
+                >
+                    <span class="small" style="font-weight: 600"
+                        >Premier jour de la semaine</span
+                    >
+                    <select
+                        id="cfgFirstDay"
+                        class="select"
+                        style="width: 140px"
+                    >
+                        <option value="1">Lundi</option>
+                        <option value="0">Dimanche</option>
+                    </select>
+                </label>
+
+                <button id="btnSaveSessionCfg" class="btn">
+                    Enregistrer les préférences
+                </button>
+            </div>
+        </section>
+
+        <section class="card">
             <h2>Processus connus</h2>
             <div class="small">
                 Liste de tous les jeux/processus déjà détectés. Actions rapides
@@ -748,6 +836,27 @@
                 const sel = document.getElementById("tzSelect");
                 const info = document.getElementById("tzInfo");
                 const btnSave = document.getElementById("tzSave");
+
+                // Session Config
+                const inputMinDur = document.getElementById("cfgMinSession");
+                const inputMaxGap = document.getElementById("cfgMaxGap");
+                const selectFirstDay = document.getElementById("cfgFirstDay");
+                const btnSaveSession =
+                    document.getElementById("btnSaveSessionCfg");
+
+                // Load initial values
+                inputMinDur.value =
+                    localStorage.getItem("cfgMinSession") || "60";
+                inputMaxGap.value = localStorage.getItem("cfgMaxGap") || "300";
+                selectFirstDay.value =
+                    localStorage.getItem("cfgFirstDay") || "1";
+
+                btnSaveSession.addEventListener("click", () => {
+                    localStorage.setItem("cfgMinSession", inputMinDur.value);
+                    localStorage.setItem("cfgMaxGap", inputMaxGap.value);
+                    localStorage.setItem("cfgFirstDay", selectFirstDay.value);
+                    alert("Préférences de session enregistrées.");
+                });
                 const btnReset = document.getElementById("tzReset");
                 if (!sel) return;
                 const systemTZ =

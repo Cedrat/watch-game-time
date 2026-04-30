@@ -457,3 +457,131 @@ func (db *Database) GetIntervalsForDate(date string) ([]DayIntervalRow, error) {
 	}
 	return rows, nil
 }
+
+// GameStats provides detailed statistics for a specific game
+type GameStats struct {
+	AvgDuration   float64   `json:"avg_duration"`
+	FirstSession  string    `json:"first_session"`
+	LastSession   string    `json:"last_session"`
+	TotalSessions int       `json:"total_sessions"`
+	HourlyDist    []int     `json:"hourly_dist"`
+	DailyDist     []float64 `json:"daily_dist"`
+}
+
+func (db *Database) GetGameStats(name string, minDur, maxGap float64) (*GameStats, error) {
+	stats := &GameStats{
+		HourlyDist: make([]int, 24),
+		DailyDist:  make([]float64, 7),
+	}
+
+	// Fetch all raw sessions for this game to perform virtual merging
+	qSessions := `
+	WITH resolved AS (
+		SELECT a.*, COALESCE(r.display_name, a.process_name) as name
+		FROM activities a
+		LEFT JOIN rename_map r ON r.original_name = a.process_name
+	)
+	SELECT start_time, end_time, duration
+	FROM resolved
+	WHERE name = ?
+	  AND NOT EXISTS (
+	    SELECT 1 FROM blacklist bx
+	    WHERE bx.name = resolved.process_name OR bx.name = resolved.name
+	  )
+	ORDER BY start_time ASC`
+
+	rows, err := db.Query(qSessions, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type rawSession struct {
+		start time.Time
+		end   time.Time
+	}
+	var raw []rawSession
+	for rows.Next() {
+		var s, e string
+		var d float64
+		if err := rows.Scan(&s, &e, &d); err == nil {
+			st, _ := time.Parse(time.RFC3339, s)
+			et, _ := time.Parse(time.RFC3339, e)
+			raw = append(raw, rawSession{st, et})
+		}
+	}
+
+	if len(raw) == 0 {
+		return stats, nil
+	}
+
+	// Virtual Merging Logic
+	var virtualSessions []rawSession
+	if len(raw) > 0 {
+		current := raw[0]
+		for i := 1; i < len(raw); i++ {
+			// If gap between current end and next start is within maxGap, merge
+			if raw[i].start.Sub(current.end).Seconds() <= maxGap {
+				current.end = raw[i].end
+			} else {
+				// Finalize current session if it meets min duration
+				if current.end.Sub(current.start).Seconds() >= minDur {
+					virtualSessions = append(virtualSessions, current)
+				}
+				current = raw[i]
+			}
+		}
+		// Last one
+		if current.end.Sub(current.start).Seconds() >= minDur {
+			virtualSessions = append(virtualSessions, current)
+		}
+	}
+
+	if len(virtualSessions) == 0 {
+		return stats, nil
+	}
+
+	// Calculate stats from virtual sessions
+	var totalDur float64
+	first := virtualSessions[0].start
+	last := virtualSessions[0].end
+
+	// Track total duration and unique dates per day of week
+	dailyTotal := make([]float64, 7)
+	dailyDates := make([]map[string]bool, 7)
+	for i := 0; i < 7; i++ {
+		dailyDates[i] = make(map[string]bool)
+	}
+
+	for _, vs := range virtualSessions {
+		dur := vs.end.Sub(vs.start).Seconds()
+		totalDur += dur
+		if vs.start.Before(first) {
+			first = vs.start
+		}
+		if vs.end.After(last) {
+			last = vs.end
+		}
+
+		// Distributions (using local time for probability)
+		localStart := vs.start.Local()
+		stats.HourlyDist[localStart.Hour()]++
+
+		dow := int(localStart.Weekday())
+		dailyTotal[dow] += dur
+		dailyDates[dow][localStart.Format("2006-01-02")] = true
+	}
+
+	for i := 0; i < 7; i++ {
+		if len(dailyDates[i]) > 0 {
+			stats.DailyDist[i] = dailyTotal[i] / float64(len(dailyDates[i]))
+		}
+	}
+
+	stats.TotalSessions = len(virtualSessions)
+	stats.AvgDuration = totalDur / float64(len(virtualSessions))
+	stats.FirstSession = first.Local().Format("2006-01-02 15:04:05")
+	stats.LastSession = last.Local().Format("2006-01-02 15:04:05")
+
+	return stats, nil
+}
