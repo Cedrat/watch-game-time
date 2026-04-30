@@ -22,10 +22,6 @@ Name: "{group}\SteamTracker"; Filename: "{app}\SteamTracker.exe"
 ; Raccourci dans le dossier de démarrage
 Name: "{userstartup}\SteamTracker"; Filename: "{app}\SteamTracker.exe"
 
-[Registry]
-; Inscription dans la base de registre pour le démarrage automatique
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SteamTracker"; ValueData: """{app}\SteamTracker.exe"""; Flags: uninsdeletevalue
-
 [Run]
 ; Option pour lancer l'app immédiatement après l'installation
 Filename: "{app}\SteamTracker.exe"; Description: "Lancer SteamTracker maintenant"; Flags: nowait postinstall skipifsilent

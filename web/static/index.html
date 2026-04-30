@@ -408,6 +408,18 @@
                 margin-top: 16px;
                 width: 100%;
             }
+            .weekly-heatmap {
+                display: grid;
+                grid-template-columns: 40px repeat(24, 1fr);
+                gap: 2px;
+                margin-top: 20px;
+            }
+            .wh-cell {
+                height: 18px;
+                border-radius: 2px;
+                background: var(--primary-weak);
+                font-size: 9px;
+            }
             .modal-charts {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -518,6 +530,7 @@
                     ></span>
                     <a class="link" href="/history">Historique</a>
                     <a class="link" href="/config">Configuration</a>
+                    <button id="viewGlobal" class="btn">Vue Globale</button>
                 </div>
             </div>
         </div>
@@ -550,8 +563,71 @@
                 </div>
             </section>
             <section id="periodGames" class="card section">
-                <h3 style="margin: 6px 0 10px 0">Jeux de la période</h3>
+                <h3 id="listTitle" style="margin: 6px 0 10px 0">
+                    Jeux de la période
+                </h3>
                 <div id="gamesList" class="games-list"></div>
+                <div id="globalInsights" class="hidden">
+                    <div class="modal-grid" style="margin-top: 0">
+                        <div
+                            class="stat-card"
+                            title="Nombre de jeux différents lancés par heure de jeu. Un index élevé indique une tendance au zapping."
+                        >
+                            <span class="stat-lbl">Index Zapping ℹ️</span>
+                            <span id="statZapping" class="stat-val">-</span>
+                        </div>
+                        <div
+                            class="stat-card"
+                            title="Temps moyen écoulé entre deux sessions de jeu."
+                        >
+                            <span class="stat-lbl">Friction Moyenne ℹ️</span>
+                            <span id="statFriction" class="stat-val">-</span>
+                        </div>
+                        <div
+                            class="stat-card"
+                            title="Nombre moyen de jeux différents lancés par jour d'activité."
+                        >
+                            <span class="stat-lbl">Jeux / Jour ℹ️</span>
+                            <span id="statAvgGames" class="stat-val">-</span>
+                        </div>
+                        <div
+                            class="stat-card"
+                            title="Part du temps total consacrée à vos 3 jeux les plus joués."
+                        >
+                            <span class="stat-lbl">Fidélité (Top 3) ℹ️</span>
+                            <span id="statFidelity" class="stat-val">-</span>
+                        </div>
+                        <div
+                            class="stat-card"
+                            title="Moment de la semaine où vous jouez statistiquement le plus."
+                        >
+                            <span class="stat-lbl">Heure de Pointe ℹ️</span>
+                            <span
+                                id="statPeak"
+                                class="stat-val"
+                                style="font-size: 14px"
+                                >-</span
+                            >
+                        </div>
+                    </div>
+                    <div style="margin-top: 16px">
+                        <h4 style="margin: 0 0 8px 0">Profil de session</h4>
+                        <div
+                            id="sessionProfile"
+                            style="
+                                display: flex;
+                                flex-direction: column;
+                                gap: 8px;
+                            "
+                        ></div>
+                    </div>
+                    <div style="margin-top: 24px">
+                        <h4 style="margin: 0 0 10px 0">
+                            Activité Hebdomadaire (Heatmap)
+                        </h4>
+                        <div id="weeklyHeatmap" class="weekly-heatmap"></div>
+                    </div>
+                </div>
             </section>
 
             <div id="gameModal" class="modal-overlay">
@@ -648,6 +724,57 @@
             const dayDetail = document.getElementById("dayDetail");
             const gameModal = document.getElementById("gameModal");
             let modalHourChart, modalDayChart;
+            let isGlobalView = false;
+
+            function renderWeeklyHeatmap(matrix) {
+                const el = document.getElementById("weeklyHeatmap");
+                el.innerHTML = "";
+                const days = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
+                const firstDay = parseInt(
+                    localStorage.getItem("cfgFirstDay") || "1",
+                );
+
+                // Header heures
+                el.appendChild(document.createElement("div")); // coin vide
+                for (let h = 0; h < 24; h++) {
+                    const hEl = document.createElement("div");
+                    hEl.className = "small";
+                    hEl.textContent = h % 4 === 0 ? h + "h" : "";
+                    hEl.style.textAlign = "center";
+                    el.appendChild(hEl);
+                }
+
+                // Lignes de jours
+                let order = [0, 1, 2, 3, 4, 5, 6];
+                if (firstDay === 1) order = [1, 2, 3, 4, 5, 6, 0];
+
+                const maxVal = Math.max(
+                    ...matrix.map((row) => Math.max(...row)),
+                    1,
+                );
+
+                order.forEach((d) => {
+                    const label = document.createElement("div");
+                    label.className = "small";
+                    label.textContent = days[d];
+                    el.appendChild(label);
+
+                    for (let h = 0; h < 24; h++) {
+                        const val = matrix[d][h];
+                        const cell = document.createElement("div");
+                        cell.className = "wh-cell";
+                        const opacity = val / maxVal;
+                        cell.style.background =
+                            val > 0
+                                ? `rgba(59, 130, 246, ${0.1 + opacity * 0.9})`
+                                : "transparent";
+                        cell.style.border = "1px solid var(--border)";
+                        if (val > 0)
+                            cell.title = `${days[d]} à ${h}h : ${val} présence(s)`;
+                        el.appendChild(cell);
+                    }
+                });
+            }
 
             function closeModal() {
                 gameModal.classList.remove("open");
@@ -1253,6 +1380,12 @@
             async function load() {
                 const p = periodSel.value;
                 const { start, end } = computeRangeForSelection();
+
+                if (isGlobalView) {
+                    await loadGlobalInsights(start, end);
+                    return;
+                }
+
                 const qs = new URLSearchParams({ period: p });
                 if (start && end) {
                     qs.set("start", start);
@@ -1341,6 +1474,89 @@
                 });
             }
 
+            async function loadGlobalInsights(start, end) {
+                const minDur = localStorage.getItem("cfgMinSession") || "60";
+                const maxGap = localStorage.getItem("cfgMaxGap") || "300";
+                const res = await fetch(
+                    `/api/global_stats?start=${start}&end=${end}&min_dur=${minDur}&max_gap=${maxGap}`,
+                );
+                const data = await res.json();
+
+                rangeEl.textContent = `Insights du ${start} au ${end}`;
+                document.getElementById("statZapping").textContent =
+                    data.zapping_index.toFixed(2);
+                document.getElementById("statFriction").textContent = fmtMins(
+                    data.avg_gap,
+                );
+                document.getElementById("statAvgGames").textContent =
+                    data.avg_games_per_day
+                        ? data.avg_games_per_day.toFixed(1)
+                        : "-";
+                document.getElementById("statFidelity").textContent =
+                    data.fidelity_index
+                        ? Math.round(data.fidelity_index * 100) + "%"
+                        : "-";
+                document.getElementById("statPeak").textContent =
+                    data.peak_time || "-";
+
+                // Pie Chart: Session Buckets
+                const ctx = document.getElementById("pieCanvas");
+                const labels = ["Snack (<15m)", "Standard", "Immersion (>1h)"];
+                const values = [
+                    data.session_buckets.snack,
+                    data.session_buckets.standard,
+                    data.session_buckets.immersion,
+                ];
+                if (chart) chart.destroy();
+                chart = new Chart(ctx, {
+                    type: "pie",
+                    data: {
+                        labels,
+                        datasets: [
+                            {
+                                data: values,
+                                backgroundColor: [
+                                    "#f87171",
+                                    "#60a5fa",
+                                    "#10b981",
+                                ],
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: "Répartition des types de sessions",
+                            },
+                        },
+                    },
+                });
+
+                // Update Session Profile list
+                const profileEl = document.getElementById("sessionProfile");
+                profileEl.innerHTML = "";
+                const total = values.reduce((a, b) => a + b, 0);
+                labels.forEach((lbl, i) => {
+                    const pct =
+                        total > 0 ? Math.round((values[i] / total) * 100) : 0;
+                    const div = document.createElement("div");
+                    div.className = "small";
+                    div.innerHTML = `<div style="display:flex; justify-content:space-between;"><span>${lbl}</span><span>${pct}%</span></div>
+                                     <div style="height:4px; background:var(--border); border-radius:2px; margin-top:2px;">
+                                        <div style="height:100%; width:${pct}%; background:${chart.data.datasets[0].backgroundColor[i]}; border-radius:2px;"></div>
+                                     </div>`;
+                    profileEl.appendChild(div);
+                });
+
+                legendPanelPie.innerHTML =
+                    '<p class="small">Vue globale active : statistiques agrégées.</p>';
+
+                renderWeeklyHeatmap(data.weekly_heatmap);
+            }
+
             async function loadHeatmap() {
                 const { start, end } = computeRangeForSelection();
                 // derive year
@@ -1360,6 +1576,12 @@
             async function loadBar() {
                 const p = periodSel.value;
                 const { start, end } = computeRangeForSelection();
+
+                if (isGlobalView) {
+                    await loadGlobalBar(start, end);
+                    return;
+                }
+
                 const qs = new URLSearchParams({ period: p });
                 if (start && end) {
                     qs.set("start", start);
@@ -1450,6 +1672,81 @@
                 buildLegend(legendPanelBar, chart);
             }
 
+            async function loadGlobalBar(start, end) {
+                const minDur = localStorage.getItem("cfgMinSession") || "60";
+                const maxGap = localStorage.getItem("cfgMaxGap") || "300";
+                const res = await fetch(
+                    `/api/global_stats?start=${start}&end=${end}&min_dur=${minDur}&max_gap=${maxGap}`,
+                );
+                const data = await res.json();
+
+                rangeEl.textContent = `Insights temporels du ${start} au ${end}`;
+
+                const ctx = document.getElementById("barCanvas");
+                if (chart) chart.destroy();
+                chart = new Chart(ctx, {
+                    type: "bar",
+                    data: {
+                        labels: Array.from({ length: 24 }, (_, i) => i + "h"),
+                        datasets: [
+                            {
+                                label: "Durée moyenne (min)",
+                                data: data.hourly_avg_duration.map(
+                                    (v) => v / 60,
+                                ),
+                                backgroundColor: "#60a5fa",
+                                yAxisID: "y",
+                            },
+                            {
+                                label: "Nombre de lancements",
+                                data: data.hourly_dist,
+                                backgroundColor: "#f87171",
+                                type: "line",
+                                borderColor: "#ef4444",
+                                borderWidth: 2,
+                                yAxisID: "y1",
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: "Intensité et Engagement par heure",
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: (ctx) => {
+                                        if (ctx.datasetIndex === 0)
+                                            return `Moyenne: ${fmtMins(ctx.raw * 60)}`;
+                                        return `Lancements: ${ctx.raw}`;
+                                    },
+                                },
+                            },
+                        },
+                        scales: {
+                            y: {
+                                type: "linear",
+                                display: true,
+                                position: "left",
+                                title: { display: true, text: "Minutes" },
+                            },
+                            y1: {
+                                type: "linear",
+                                display: true,
+                                position: "right",
+                                grid: { drawOnChartArea: false },
+                                title: { display: true, text: "Lancements" },
+                            },
+                        },
+                    },
+                });
+                legendPanelBar.innerHTML =
+                    '<p class="small">Bleu: Durée moyenne / Rouge: Fréquence</p>';
+            }
+
             const viewPieBtn = document.getElementById("viewPie");
             const viewBarBtn = document.getElementById("viewBar");
 
@@ -1535,13 +1832,69 @@
             });
 
             viewPieBtn.addEventListener("click", () => {
+                isGlobalView = false;
+                document
+                    .getElementById("viewGlobal")
+                    .classList.remove("btn-primary");
+                document.getElementById("listTitle").textContent =
+                    "Jeux de la période";
+                document.getElementById("gamesList").classList.remove("hidden");
+                document
+                    .getElementById("globalInsights")
+                    .classList.add("hidden");
                 showPie();
                 withFade(pieView, load);
             });
             viewBarBtn.addEventListener("click", () => {
+                isGlobalView = false;
+                document
+                    .getElementById("viewGlobal")
+                    .classList.remove("btn-primary");
+                document.getElementById("listTitle").textContent =
+                    "Jeux de la période";
+                document.getElementById("gamesList").classList.remove("hidden");
+                document
+                    .getElementById("globalInsights")
+                    .classList.add("hidden");
                 showBar();
                 withFade(barView, loadBar);
             });
+            document
+                .getElementById("viewGlobal")
+                .addEventListener("click", (e) => {
+                    isGlobalView = !isGlobalView;
+                    if (isGlobalView) {
+                        document
+                            .getElementById("viewGlobal")
+                            .classList.add("btn-primary");
+                        viewPieBtn.classList.remove("btn-primary");
+                        viewBarBtn.classList.remove("btn-primary");
+                        document.getElementById("listTitle").textContent =
+                            "Insights Comportementaux";
+                        document
+                            .getElementById("gamesList")
+                            .classList.add("hidden");
+                        document
+                            .getElementById("globalInsights")
+                            .classList.remove("hidden");
+                        showPie();
+                        withFade(pieView, load);
+                    } else {
+                        document
+                            .getElementById("viewGlobal")
+                            .classList.remove("btn-primary");
+                        document.getElementById("listTitle").textContent =
+                            "Jeux de la période";
+                        document
+                            .getElementById("gamesList")
+                            .classList.remove("hidden");
+                        document
+                            .getElementById("globalInsights")
+                            .classList.add("hidden");
+                        viewPieBtn.classList.add("btn-primary");
+                        withFade(pieView, load);
+                    }
+                });
 
             document.getElementById("prevBtn").addEventListener("click", () => {
                 shiftSelection(-1);

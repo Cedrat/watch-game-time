@@ -47,6 +47,7 @@ func StartServer(db *query.Database, lm *manager.ListManager) {
 	http.HandleFunc("/api/series", s.handleSeries)
 	http.HandleFunc("/api/games_meta", s.handleGamesMeta)
 	http.HandleFunc("/api/game_stats", s.handleGameStats)
+	http.HandleFunc("/api/global_stats", s.handleGlobalStats)
 	http.HandleFunc("/api/calendar", s.handleCalendar)
 	http.HandleFunc("/api/set_first_launch_date", s.handleSetFirstLaunchDate)
 	http.HandleFunc("/api/set_finished_date", s.handleSetFinishedDate)
@@ -143,6 +144,34 @@ func (s *Server) handleGameStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, stats)
+}
+
+func (s *Server) handleGlobalStats(w http.ResponseWriter, r *http.Request) {
+	start := r.URL.Query().Get("start")
+	end := r.URL.Query().Get("end")
+	if start == "" || end == "" {
+		http.Error(w, "missing start or end", http.StatusBadRequest)
+		return
+	}
+
+	minDurStr := r.URL.Query().Get("min_dur")
+	maxGapStr := r.URL.Query().Get("max_gap")
+
+	minDur, err := strconv.ParseFloat(minDurStr, 64)
+	if err != nil {
+		minDur = 60
+	}
+	maxGap, err := strconv.ParseFloat(maxGapStr, 64)
+	if err != nil {
+		maxGap = 300
+	}
+
+	insights, err := s.db.GetGlobalInsights(start, end, minDur, maxGap)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, insights)
 }
 
 func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
