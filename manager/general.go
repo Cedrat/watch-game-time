@@ -1,12 +1,18 @@
 package manager
 
 import (
+	_ "embed"
+	"encoding/json"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+//go:embed default_blacklist.json
+var defaultBlacklistJSON []byte
 
 // Structure pour gérer les listes en mémoire
 type ListManager struct {
@@ -22,6 +28,18 @@ func NewListManager(db *sqlx.DB) (*ListManager, error) {
 		db:        db,
 		whitelist: make(map[string]struct{}),
 		blacklist: make(map[string]struct{}),
+	}
+
+	// Charger la blacklist par défaut si elle est vide en base
+	var count int
+	err := db.Get(&count, "SELECT COUNT(*) FROM blacklist")
+	if err == nil && count == 0 {
+		var defaults []string
+		if err := json.Unmarshal(defaultBlacklistJSON, &defaults); err == nil {
+			for _, name := range defaults {
+				_, _ = db.Exec("INSERT OR IGNORE INTO blacklist (name) VALUES (?)", name)
+			}
+		}
 	}
 
 	// Charger les listes initiales
@@ -132,7 +150,7 @@ func (lm *ListManager) RemoveFromWhitelist(name string) error {
 // Ajouter à la blacklist et mettre à jour la mémoire
 func (lm *ListManager) AddToBlacklist(name string) error {
 	// Insérer dans la base de données
-	_, err := lm.db.Exec("INSERT INTO blacklist (name) VALUES (?)", name)
+	_, err := lm.db.Exec("INSERT OR IGNORE INTO blacklist (name) VALUES (?)", name)
 	if err != nil {
 		return err
 	}
@@ -161,4 +179,29 @@ func (lm *ListManager) RemoveFromBlacklist(name string) error {
 	return nil
 }
 
-// Votre fonction modifiée
+// ExportBlacklist renvoie la liste actuelle des entrées de la blacklist triée
+func (lm *ListManager) ExportBlacklist() []string {
+	lm.mutex.RLock()
+	defer lm.mutex.RUnlock()
+
+	res := make([]string, 0, len(lm.blacklist))
+	for name := range lm.blacklist {
+		res = append(res, name)
+	}
+	sort.Strings(res)
+	return res
+}
+
+// ImportBlacklist ajoute une liste de noms à la blacklist
+func (lm *ListManager) ImportBlacklist(names []string) error {
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if err := lm.AddToBlacklist(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}

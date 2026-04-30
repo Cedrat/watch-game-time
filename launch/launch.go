@@ -245,6 +245,11 @@ func (pm *ProcessMonitor) processCheck(p *process.Process, listManager *manager.
 			// On cherche un nom "propre" via les métadonnées de l'exécutable (ProductName/FileDescription)
 			friendlyName := GetFriendlyName(path)
 
+			// Ignorer les processus utilitaires (crash handlers, reporters, etc.)
+			if IsJunkProcess(originalName, friendlyName) {
+				return
+			}
+
 			if friendlyName != "" && friendlyName != cleanOriginal {
 				// On enregistre dans la map de renommage (nom avec .exe)
 				pm.db.UpsertRename(originalName, friendlyName)
@@ -284,6 +289,10 @@ func (pm *ProcessMonitor) RunGlobalRename() {
 		}
 
 		friendly := GetFriendlyName(path)
+		// Ignorer les processus utilitaires (crash handlers, reporters, etc.)
+		if IsJunkProcess(name, friendly) {
+			continue
+		}
 		cleanOrig := strings.TrimSuffix(name, filepath.Ext(name))
 
 		// Si on a trouvé un nom riche (ProductName/FileDescription) différent du nom de fichier
