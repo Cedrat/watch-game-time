@@ -6,8 +6,8 @@ import (
 )
 
 type SummaryItem struct {
-	Name     string  `db:"name" json:"name"`
-	Seconds  float64 `db:"seconds" json:"seconds"`
+	Name    string  `db:"name" json:"name"`
+	Seconds float64 `db:"seconds" json:"seconds"`
 }
 
 // GameMeta represents flags for games within a period
@@ -89,7 +89,7 @@ func (db *Database) GetHistory(hideBlacklisted bool) ([]SessionItem, error) {
 		// Exclude rows that are blacklisted either by original or display name.
 		q += `
 	WHERE NOT EXISTS (
-	  SELECT 1 FROM blacklist bx 
+	  SELECT 1 FROM blacklist bx
 	  WHERE bx.name = b.process_name OR bx.name = COALESCE(r.display_name, b.process_name)
 	)`
 	}
@@ -138,8 +138,43 @@ func (db *Database) GetHistory(hideBlacklisted bool) ([]SessionItem, error) {
 
 // UpsertRename sets the display name for an original process_name
 func (db *Database) UpsertRename(original, display string) error {
-	_, err := db.Exec(`INSERT INTO rename_map (original_name, display_name) VALUES (?, ?) 
+	_, err := db.Exec(`INSERT INTO rename_map (original_name, display_name) VALUES (?, ?)
 	ON CONFLICT(original_name) DO UPDATE SET display_name=excluded.display_name`, original, display)
+	return err
+}
+
+// CleanupProcessNames removes the .exe extension from any process names in the rename_map
+// that haven't been manually renamed to something else yet, ensures entries exist for names without extensions,
+// and populates rename_map for all known processes that haven't been mapped yet.
+func (db *Database) CleanupProcessNames() error {
+	// 1. Initialiser la rename_map pour tous les processus connus qui n'y sont pas encore
+	_, err := db.Exec(`
+		INSERT OR IGNORE INTO rename_map (original_name, display_name)
+		SELECT DISTINCT process_name, process_name
+		FROM activities
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 2. Enlever le .exe du display_name quand il est identique au nom original
+	_, err = db.Exec(`
+		UPDATE rename_map
+		SET display_name = SUBSTR(original_name, 1, LENGTH(original_name) - 4)
+		WHERE original_name LIKE '%.exe'
+		  AND display_name = original_name
+	`)
+	if err != nil {
+		return err
+	}
+
+	// 3. Créer des entrées pour les noms sans extension (compatibilité recherche)
+	_, err = db.Exec(`
+		INSERT OR IGNORE INTO rename_map (original_name, display_name)
+		SELECT SUBSTR(original_name, 1, LENGTH(original_name) - 4), display_name
+		FROM rename_map
+		WHERE original_name LIKE '%.exe'
+	`)
 	return err
 }
 
@@ -148,9 +183,13 @@ func (db *Database) UpsertRename(original, display string) error {
 // - Otherwise, we upsert a mapping original_name = from -> display_name = to.
 func (db *Database) RenameSmart(from, to string) error {
 	res, err := db.Exec(`UPDATE rename_map SET display_name = ? WHERE display_name = ?`, to, from)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if res != nil {
-		if n, _ := res.RowsAffected(); n > 0 { return nil }
+		if n, _ := res.RowsAffected(); n > 0 {
+			return nil
+		}
 	}
 	return db.UpsertRename(from, to)
 }
@@ -278,7 +317,6 @@ func PeriodRange(period string, now time.Time) (string, string) {
 	return start.Format("2006-01-02"), nowDate
 }
 
-
 // GetGamesMetaBetween returns list of games played in [start,end] with flags
 func (db *Database) GetGamesMetaBetween(startDate, endDate string) ([]GameMeta, error) {
 	rows := []GameMeta{}
@@ -317,13 +355,12 @@ func (db *Database) GetGamesMetaBetween(startDate, endDate string) ([]GameMeta, 
 	return rows, nil
 }
 
-
 // CalendarDay aggregates per-day totals and lists for heatmap
 type CalendarDay struct {
-	Date         string  `db:"date" json:"date"`
-	Seconds      float64 `db:"seconds" json:"seconds"`
-	NewCSV       string  `db:"new_csv" json:"-"`
-	FinishedCSV  string  `db:"finished_csv" json:"-"`
+	Date        string  `db:"date" json:"date"`
+	Seconds     float64 `db:"seconds" json:"seconds"`
+	NewCSV      string  `db:"new_csv" json:"-"`
+	FinishedCSV string  `db:"finished_csv" json:"-"`
 }
 
 // GetCalendarDays returns, for each day in [startDate,endDate],
