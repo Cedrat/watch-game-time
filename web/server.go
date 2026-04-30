@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,7 @@ func StartServer(db *query.Database, lm *manager.ListManager) {
 	http.HandleFunc("/api/finished", s.handleFinished)
 	http.HandleFunc("/api/series", s.handleSeries)
 	http.HandleFunc("/api/games_meta", s.handleGamesMeta)
+	http.HandleFunc("/api/game_stats", s.handleGameStats)
 	http.HandleFunc("/api/calendar", s.handleCalendar)
 	http.HandleFunc("/api/set_first_launch_date", s.handleSetFirstLaunchDate)
 	http.HandleFunc("/api/set_finished_date", s.handleSetFinishedDate)
@@ -114,6 +116,33 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, items)
+}
+
+func (s *Server) handleGameStats(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "missing name", http.StatusBadRequest)
+		return
+	}
+
+	minDurStr := r.URL.Query().Get("min_dur")
+	maxGapStr := r.URL.Query().Get("max_gap")
+
+	minDur, err := strconv.ParseFloat(minDurStr, 64)
+	if err != nil {
+		minDur = 60
+	}
+	maxGap, err := strconv.ParseFloat(maxGapStr, 64)
+	if err != nil {
+		maxGap = 300
+	}
+
+	stats, err := s.db.GetGameStats(name, minDur, maxGap)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, stats)
 }
 
 func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
