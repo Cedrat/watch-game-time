@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -52,6 +55,8 @@ func StartServer(db *query.Database, lm *manager.ListManager) {
 	http.HandleFunc("/api/history_delete", s.handleHistoryDelete)
 	// Day timeline API
 	http.HandleFunc("/api/day_timeline", s.handleDayTimeline)
+	// Uninstall API
+	http.HandleFunc("/api/uninstall", s.handleUninstall)
 
 	go func() {
 		// Bind explicitly to localhost to avoid Windows Firewall prompts
@@ -935,4 +940,40 @@ func writeJSON(w http.ResponseWriter, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	enc.Encode(v)
+}
+
+func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	exeDir := filepath.Dir(exePath)
+	uninstallerPath := filepath.Join(exeDir, "unins000.exe")
+
+	if _, err := os.Stat(uninstallerPath); os.IsNotExist(err) {
+		http.Error(w, "Désinstalleur introuvable. Vous pouvez le désinstaller depuis les paramètres Windows.", http.StatusNotFound)
+		return
+	}
+
+	cmd := exec.Command(uninstallerPath)
+	err = cmd.Start()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	// Quitter l'application pour que le désinstalleur puisse supprimer les fichiers
+	go func() {
+		time.Sleep(1 * time.Second)
+		os.Exit(0)
+	}()
 }

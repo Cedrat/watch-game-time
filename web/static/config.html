@@ -310,6 +310,26 @@
             ></div>
         </section>
 
+        <section
+            class="card"
+            style="border-color: #ffcccc; background-color: #fff5f5"
+        >
+            <h2 style="color: #cc0000">Désinstallation</h2>
+            <div style="margin-bottom: 10px; color: #555">
+                Permet de désinstaller complètement l'application, de supprimer
+                l'intégration au démarrage et de nettoyer les fichiers. (La base
+                de données sera conservée dans vos données d'application).
+            </div>
+            <div>
+                <button
+                    id="btnUninstall"
+                    style="background-color: #cc0000; color: white"
+                >
+                    Désinstaller SteamTracker
+                </button>
+            </div>
+        </section>
+
         <script>
             async function fetchJSON(url) {
                 const r = await fetch(url);
@@ -793,6 +813,36 @@
                     alert("Réinitialisé sur le fuseau système.");
                 });
             })();
+
+            document
+                .getElementById("btnUninstall")
+                .addEventListener("click", async () => {
+                    if (
+                        confirm(
+                            "Voulez-vous vraiment désinstaller SteamTracker ? Cette action fermera l'application et lancera le désinstalleur.",
+                        )
+                    ) {
+                        try {
+                            const res = await fetch("/api/uninstall", {
+                                method: "POST",
+                            });
+                            if (res.ok) {
+                                alert(
+                                    "Lancement du désinstalleur... L'application va se fermer.",
+                                );
+                                window.close(); // Ferme l'onglet du navigateur
+                            } else {
+                                alert("Erreur: " + (await res.text()));
+                            }
+                        } catch (e) {
+                            // Might throw an error because the server exits and aborts the fetch
+                            alert(
+                                "Lancement du désinstalleur... L'application s'est fermée.",
+                            );
+                            window.close();
+                        }
+                    }
+                });
         </script>
     </body>
 </html>

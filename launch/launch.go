@@ -24,8 +24,16 @@ func StartProgramme() {
 
 func onReady() {
 	// Définir l'icône de l'application
-	// Vous devez remplacer "icon.ico" par le chemin vers votre fichier d'icône
-	icon, err := os.ReadFile("./icon.ico")
+	// On récupère le chemin de l'exécutable pour charger l'icône de manière fiable
+	exePath, err := os.Executable()
+	var iconPath string
+	if err == nil {
+		iconPath = filepath.Join(filepath.Dir(exePath), "icon.ico")
+	} else {
+		iconPath = "./icon.ico"
+	}
+
+	icon, err := os.ReadFile(iconPath)
 	if err == nil {
 		systray.SetIcon(icon)
 	}
