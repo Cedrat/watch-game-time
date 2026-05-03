@@ -363,6 +363,81 @@
         </section>
 
         <section class="card">
+            <h2>Intégration Steam</h2>
+            <div class="small" style="margin-bottom: 8px">
+                Configurez votre clé API Steam pour récupérer automatiquement
+                les icônes de jeux et vos succès. Vous pouvez trouver votre
+                SteamID64 (ex: 76561198...) sur votre profil Steam.
+            </div>
+            <div
+                class="controls"
+                style="
+                    flex-direction: column;
+                    align-items: flex-start;
+                    gap: 12px;
+                "
+            >
+                <div style="width: 100%">
+                    <label
+                        style="
+                            display: block;
+                            font-weight: bold;
+                            margin-bottom: 4px;
+                        "
+                        >Clé API Steam :</label
+                    >
+                    <input
+                        type="text"
+                        id="steamApiKey"
+                        placeholder="Entrez votre clé API"
+                        style="width: 100%"
+                    />
+                    <a
+                        href="https://steamcommunity.com/dev/apikey"
+                        target="_blank"
+                        class="small"
+                        >Obtenir une clé API</a
+                    >
+                </div>
+                <div style="width: 100%">
+                    <label
+                        style="
+                            display: block;
+                            font-weight: bold;
+                            margin-bottom: 4px;
+                        "
+                        >SteamID64 :</label
+                    >
+                    <input
+                        type="text"
+                        id="steamId"
+                        placeholder="ex: 76561198XXXXXXXXX"
+                        style="width: 100%"
+                    />
+                </div>
+                <div>
+                    <label
+                        style="
+                            display: flex;
+                            align-items: center;
+                            gap: 8px;
+                            cursor: pointer;
+                        "
+                    >
+                        <input type="checkbox" id="steamNotifs" checked />
+                        Notifications de succès (Windows Toast)
+                    </label>
+                </div>
+                <div style="display: flex; gap: 8px">
+                    <button id="btnSaveSteam" class="btn-primary">
+                        Enregistrer
+                    </button>
+                    <button id="btnSyncSteam">Synchronisation complète</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="card">
             <h2>Export / Import des données</h2>
             <div class="small" style="margin-bottom: 8px">
                 Exportez toutes vos données au format JSON, puis réimportez-les
@@ -583,8 +658,61 @@
                 });
             })();
 
+            async function loadSteamSettings() {
+                try {
+                    const data = await fetchJSON("/api/steam/settings");
+                    document.getElementById("steamApiKey").value =
+                        data.api_key || "";
+                    document.getElementById("steamId").value =
+                        data.steam_id || "";
+                    document.getElementById("steamNotifs").checked =
+                        data.notifications_enabled;
+                } catch (e) {
+                    console.error("Erreur chargement Steam", e);
+                }
+            }
+
+            document
+                .getElementById("btnSaveSteam")
+                .addEventListener("click", async () => {
+                    const api_key = document
+                        .getElementById("steamApiKey")
+                        .value.trim();
+                    const steam_id = document
+                        .getElementById("steamId")
+                        .value.trim();
+                    const notifications_enabled =
+                        document.getElementById("steamNotifs").checked;
+
+                    try {
+                        await postJSON("/api/steam/settings", {
+                            api_key,
+                            steam_id,
+                            notifications_enabled,
+                        });
+                        alert("Paramètres Steam enregistrés !");
+                    } catch (e) {
+                        alert("Erreur lors de l'enregistrement : " + e.message);
+                    }
+                });
+
+            document
+                .getElementById("btnSyncSteam")
+                .addEventListener("click", async () => {
+                    try {
+                        await postJSON("/api/steam/sync", {});
+                        alert("Synchronisation lancée en arrière-plan...");
+                    } catch (e) {
+                        alert("Erreur : " + e.message);
+                    }
+                });
+
             async function loadAll() {
-                await Promise.all([loadLists(), loadKnown()]);
+                await Promise.all([
+                    loadLists(),
+                    loadKnown(),
+                    loadSteamSettings(),
+                ]);
             }
 
             document.getElementById("wlAdd").addEventListener("click", () => {

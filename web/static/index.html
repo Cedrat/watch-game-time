@@ -426,6 +426,54 @@
                 gap: 24px;
                 margin-top: 20px;
             }
+            /* Achievements */
+            .ach-list {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                gap: 12px;
+                margin-top: 10px;
+            }
+            .ach-item {
+                display: flex;
+                gap: 12px;
+                align-items: center;
+                background: var(--bg);
+                padding: 10px;
+                border-radius: 10px;
+                border: 1px solid var(--border);
+            }
+            .ach-icon {
+                width: 48px;
+                height: 48px;
+                border-radius: 6px;
+                object-fit: cover;
+                flex-shrink: 0;
+            }
+            .ach-info {
+                flex: 1;
+                min-width: 0;
+            }
+            .ach-name {
+                font-weight: 600;
+                font-size: 14px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                display: block;
+            }
+            .ach-desc {
+                font-size: 12px;
+                color: var(--muted);
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+            .ach-date {
+                font-size: 10px;
+                color: var(--muted);
+                margin-top: 4px;
+            }
         </style>
     </head>
     <body>
@@ -654,6 +702,13 @@
                             ><span id="statLast" class="stat-val">-</span>
                         </div>
                     </div>
+                    <div
+                        id="modalAchievementsSection"
+                        style="display: none; margin-top: 20px"
+                    >
+                        <h4 style="margin: 0 0 10px 0">Succès</h4>
+                        <div id="modalAchievements" class="ach-list"></div>
+                    </div>
                     <div class="modal-charts">
                         <div>
                             <h4 style="margin: 0">Distribution par heure</h4>
@@ -671,6 +726,15 @@
                 </div>
             </div>
         </div>
+
+        <section
+            id="achievementsSection"
+            class="container card section"
+            style="display: none"
+        >
+            <h3 style="margin: 6px 0 10px 0">Derniers Succès</h3>
+            <div id="recentAchievements" class="ach-list"></div>
+        </section>
 
         <section id="heatmapSection" class="container card section">
             <h3 style="margin: 6px 0 10px 0">Heatmap</h3>
@@ -723,6 +787,11 @@
                 document.getElementById("dayTimelineSection");
             const dayDetail = document.getElementById("dayDetail");
             const gameModal = document.getElementById("gameModal");
+            const achievementsSection = document.getElementById(
+                "achievementsSection",
+            );
+            const recentAchievementsEl =
+                document.getElementById("recentAchievements");
             let modalHourChart, modalDayChart;
             let isGlobalView = false;
 
@@ -808,6 +877,79 @@
                             : "-";
 
                     gameModal.classList.add("open");
+
+                    // Charger les succès du jeu (non-bloquant)
+                    if (document.getElementById("modalAchievementsSection")) {
+                        (async () => {
+                            const modalAchSection = document.getElementById(
+                                "modalAchievementsSection",
+                            );
+                            const modalAchList =
+                                document.getElementById("modalAchievements");
+                            try {
+                                const meta =
+                                    (typeof lastMeta !== "undefined"
+                                        ? lastMeta[name]
+                                        : null) || {};
+                                let appid = meta.appid;
+
+                                if (!appid) {
+                                    const metaRes = await fetch(
+                                        `/api/games_meta?period=year`,
+                                    ).catch(() => null);
+                                    if (metaRes && metaRes.ok) {
+                                        const metaData = await metaRes
+                                            .json()
+                                            .catch(() => ({ items: [] }));
+                                        const gameMeta = (
+                                            metaData.items || []
+                                        ).find((it) => it.name === name);
+                                        if (gameMeta) appid = gameMeta.appid;
+                                    }
+                                }
+
+                                if (!appid || appid === 0) {
+                                    modalAchSection.style.display = "none";
+                                    return;
+                                }
+
+                                const achRes = await fetch(
+                                    `/api/steam/achievements?appid=${appid}`,
+                                ).catch(() => null);
+                                if (achRes && achRes.ok) {
+                                    const gameAchs = await achRes
+                                        .json()
+                                        .catch(() => []);
+                                    if (gameAchs && gameAchs.length > 0) {
+                                        modalAchSection.style.display = "block";
+                                        modalAchList.innerHTML = "";
+                                        gameAchs.forEach((ach) => {
+                                            const item =
+                                                document.createElement("div");
+                                            item.className = "ach-item";
+                                            item.innerHTML = `
+                                                <img src="${ach.icon_url}" class="ach-icon" onerror="this.src='/static/icon.png'">
+                                                <div class="ach-info">
+                                                    <span class="ach-name">${ach.name || ach.apiname}</span>
+                                                    <div class="ach-desc">${ach.description || ""}</div>
+                                                    <div class="ach-date">${ach.unlocked_at ? new Date(ach.unlocked_at * 1000).toLocaleString() : ""}</div>
+                                                </div>
+                                            `;
+                                            modalAchList.appendChild(item);
+                                        });
+                                        return;
+                                    }
+                                }
+                                modalAchSection.style.display = "none";
+                            } catch (e) {
+                                console.warn(
+                                    "Erreur chargement succès modal",
+                                    e,
+                                );
+                                modalAchSection.style.display = "none";
+                            }
+                        })();
+                    }
 
                     const ctxH = document
                         .getElementById("hourChart")
@@ -910,12 +1052,18 @@
                         qs.set("start", start);
                         qs.set("end", end);
                     }
-                    const res = await fetch("/api/games_meta?" + qs.toString());
-                    const data = await res.json();
-                    lastMeta = {};
-                    (data.items || []).forEach((it) => {
-                        lastMeta[it.name] = it;
-                    });
+                    const res = await fetch(
+                        "/api/games_meta?" + qs.toString(),
+                    ).catch(() => null);
+                    if (res && res.ok) {
+                        const data = await res
+                            .json()
+                            .catch(() => ({ items: [] }));
+                        lastMeta = {};
+                        (data.items || []).forEach((it) => {
+                            lastMeta[it.name] = it;
+                        });
+                    }
                 } catch (e) {
                     lastMeta = {};
                 }
@@ -938,7 +1086,25 @@
                     row.onclick = () => openGameStats(it.name);
                     const icon = document.createElement("div");
                     icon.className = "game-icon";
-                    icon.textContent = "🎮";
+                    const meta =
+                        (typeof lastMeta !== "undefined"
+                            ? lastMeta[it.name]
+                            : null) || {};
+                    if (meta && meta.icon_url) {
+                        const img = document.createElement("img");
+                        img.src = meta.icon_url;
+                        img.style.width = "100%";
+                        img.style.height = "100%";
+                        img.style.objectFit = "cover";
+                        img.style.borderRadius = "4px";
+                        img.onerror = function () {
+                            this.style.display = "none";
+                            this.parentElement.textContent = "🎮";
+                        };
+                        icon.appendChild(img);
+                    } else {
+                        icon.textContent = "🎮";
+                    }
                     const name = document.createElement("div");
                     name.textContent = it.name;
                     name.style.flex = "1";
@@ -950,14 +1116,14 @@
                     const badges = document.createElement("div");
                     badges.style.display = "flex";
                     badges.style.gap = "6px";
-                    const meta = lastMeta[it.name] || {};
-                    if (meta.is_new) {
+                    const m = lastMeta[it.name] || {};
+                    if (m.is_new) {
                         const b = document.createElement("span");
                         b.className = "badge-new";
                         b.textContent = "New";
                         badges.appendChild(b);
                     }
-                    if (meta.finished_in_period) {
+                    if (m.finished_in_period) {
                         const f = document.createElement("span");
                         f.className = "badge-finish";
                         f.textContent = "✔ Fini";
@@ -1199,7 +1365,10 @@
                 return monday;
             }
             function ymd(d) {
-                return d.toISOString().slice(0, 10);
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, "0");
+                const day = String(d.getDate()).padStart(2, "0");
+                return `${y}-${m}-${day}`;
             }
 
             function computeRangeForSelection() {
@@ -1378,183 +1547,278 @@
             }
 
             async function load() {
-                const p = periodSel.value;
-                const { start, end } = computeRangeForSelection();
+                try {
+                    const p = periodSel.value;
+                    const { start, end } = computeRangeForSelection();
 
-                if (isGlobalView) {
-                    await loadGlobalInsights(start, end);
-                    return;
-                }
+                    if (isGlobalView) {
+                        await loadGlobalInsights(start, end).catch((e) =>
+                            console.error("GlobalInsights Error:", e),
+                        );
+                        return;
+                    }
 
-                const qs = new URLSearchParams({ period: p });
-                if (start && end) {
-                    qs.set("start", start);
-                    qs.set("end", end);
-                }
-                const res = await fetch(`/api/summary?` + qs.toString());
-                const data = await res.json();
-                rangeEl.textContent = `Du ${data.start} au ${data.end}`;
-                const items = data.items;
-                const totalSec = (items || []).reduce(
-                    (sum, it) => sum + (Number(it.seconds) || 0),
-                    0,
-                );
-                totalEl.textContent = `Total: ${fmtHM(totalSec)}`;
-                // update sidebar list
-                loadGamesMetaSidebar(p, data.start, data.end, items);
+                    const qs = new URLSearchParams({ period: p });
+                    if (start && end) {
+                        qs.set("start", start);
+                        qs.set("end", end);
+                    }
 
-                // pie
-                const ctx = document.getElementById("pieCanvas");
-                const labels = items.map((i) => i.name);
-                const values = items.map((i) => i.seconds);
-                if (chart) chart.destroy();
-                chart = new Chart(ctx, {
-                    type: "pie",
-                    data: {
-                        labels,
-                        datasets: [
-                            {
-                                data: values,
-                                backgroundColor: labels.map((_, i) =>
-                                    colorFor(i),
-                                ),
-                            },
-                        ],
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        animation: { duration: 250 },
-                        onClick: (e, el) => {
-                            if (el.length > 0)
-                                openGameStats(chart.data.labels[el[0].index]);
+                    async function loadRecentAchievements() {
+                        try {
+                            if (!achievementsSection) return;
+                            const res = await fetch(
+                                "/api/steam/achievements?limit=6",
+                            ).catch(() => null);
+                            if (!res || !res.ok) {
+                                achievementsSection.style.display = "none";
+                                return;
+                            }
+                            const achs = await res.json().catch(() => []);
+
+                            if (!achs || achs.length === 0) {
+                                achievementsSection.style.display = "none";
+                                return;
+                            }
+
+                            achievementsSection.style.display = "block";
+                            recentAchievementsEl.innerHTML = "";
+
+                            achs.forEach((ach) => {
+                                const item = document.createElement("div");
+                                item.className = "ach-item";
+
+                                const img = document.createElement("img");
+                                img.src = ach.icon_url;
+                                img.className = "ach-icon";
+                                img.onerror = function () {
+                                    this.src = "/static/icon.png";
+                                };
+
+                                const info = document.createElement("div");
+                                info.className = "ach-info";
+
+                                const name = document.createElement("span");
+                                name.className = "ach-name";
+                                name.textContent = ach.name || ach.apiname;
+
+                                const desc = document.createElement("div");
+                                desc.className = "ach-desc";
+                                desc.textContent = ach.description || "";
+
+                                const date = document.createElement("div");
+                                date.className = "ach-date";
+                                const d = new Date(ach.unlocked_at * 1000);
+                                date.textContent = d.toLocaleString();
+
+                                info.appendChild(name);
+                                info.appendChild(desc);
+                                info.appendChild(date);
+
+                                item.appendChild(img);
+                                item.appendChild(info);
+                                recentAchievementsEl.appendChild(item);
+                            });
+                        } catch (e) {
+                            console.warn("Erreur succès", e);
+                            if (achievementsSection)
+                                achievementsSection.style.display = "none";
+                        }
+                    }
+
+                    loadRecentAchievements();
+
+                    const res = await fetch(
+                        `/api/summary?` + qs.toString(),
+                    ).catch(() => null);
+                    if (!res || !res.ok) {
+                        renderGamesList([]);
+                        return;
+                    }
+                    const data = await res.json().catch(() => ({ items: [] }));
+                    rangeEl.textContent = `Du ${data.start || ""} au ${data.end || ""}`;
+                    const items = data.items || [];
+                    const totalSec = (items || []).reduce(
+                        (sum, it) => sum + (Number(it.seconds) || 0),
+                        0,
+                    );
+                    totalEl.textContent = `Total: ${fmtHM(totalSec)}`;
+                    // update sidebar list
+                    loadGamesMetaSidebar(p, data.start, data.end, items);
+
+                    // pie
+                    if (typeof Chart === "undefined") {
+                        renderGamesList(items);
+                        return;
+                    }
+                    const ctx = document.getElementById("pieCanvas");
+                    const labels = items.map((i) => i.name);
+                    const values = items.map((i) => i.seconds);
+                    if (chart) chart.destroy();
+                    chart = new Chart(ctx, {
+                        type: "pie",
+                        data: {
+                            labels,
+                            datasets: [
+                                {
+                                    data: values,
+                                    backgroundColor: labels.map((_, i) =>
+                                        colorFor(i),
+                                    ),
+                                },
+                            ],
                         },
-                        plugins: {
-                            tooltip: {
-                                callbacks: {
-                                    label: (ctx) => {
-                                        const val = ctx.raw || 0;
-                                        return `${ctx.label}: ${fmtMins(val)} (${fmtHM(val)})`;
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            animation: { duration: 250 },
+                            onClick: (e, el) => {
+                                if (el.length > 0)
+                                    openGameStats(
+                                        chart.data.labels[el[0].index],
+                                    );
+                            },
+                            plugins: {
+                                tooltip: {
+                                    callbacks: {
+                                        label: (ctx) => {
+                                            const val = ctx.raw || 0;
+                                            return `${ctx.label}: ${fmtMins(val)} (${fmtHM(val)})`;
+                                        },
                                     },
                                 },
-                            },
-                            title: {
-                                display: true,
-                                text: periodTitle(
-                                    periodSel.value,
-                                    data.start,
-                                    data.end,
-                                ),
+                                title: {
+                                    display: true,
+                                    text: periodTitle(
+                                        periodSel.value,
+                                        data.start,
+                                        data.end,
+                                    ),
+                                },
                             },
                         },
-                    },
-                });
-                // Build floating legend for pie (one dataset with multiple segments): create faux dataset controls
-                legendPanelPie.innerHTML = "";
-                labels.forEach((name, i) => {
-                    const row = document.createElement("label");
-                    row.className = "legend-item";
-                    const sw = document.createElement("span");
-                    sw.className = "legend-swatch";
-                    sw.style.background = colorFor(i);
-                    const cb = document.createElement("input");
-                    cb.type = "checkbox";
-                    cb.checked = chart.getDataVisibility(i);
-                    cb.addEventListener("change", () => {
-                        chart.toggleDataVisibility(i);
-                        chart.update();
                     });
-                    const txt = document.createElement("span");
-                    txt.textContent = name;
-                    txt.style.flex = "1";
-                    row.appendChild(sw);
-                    row.appendChild(cb);
-                    row.appendChild(txt);
-                    legendPanelPie.appendChild(row);
-                });
+                    // Build floating legend for pie (one dataset with multiple segments): create faux dataset controls
+                    legendPanelPie.innerHTML = "";
+                    labels.forEach((name, i) => {
+                        const row = document.createElement("label");
+                        row.className = "legend-item";
+                        const sw = document.createElement("span");
+                        sw.className = "legend-swatch";
+                        sw.style.background = colorFor(i);
+                        const cb = document.createElement("input");
+                        cb.type = "checkbox";
+                        cb.checked = chart.getDataVisibility(i);
+                        cb.addEventListener("change", () => {
+                            chart.toggleDataVisibility(i);
+                            chart.update();
+                        });
+                        const txt = document.createElement("span");
+                        txt.textContent = name;
+                        txt.style.flex = "1";
+                        row.appendChild(sw);
+                        row.appendChild(cb);
+                        row.appendChild(txt);
+                        legendPanelPie.appendChild(row);
+                    });
+                } catch (e) {
+                    console.error("Critical Load Error:", e);
+                }
             }
 
             async function loadGlobalInsights(start, end) {
-                const minDur = localStorage.getItem("cfgMinSession") || "60";
-                const maxGap = localStorage.getItem("cfgMaxGap") || "300";
-                const res = await fetch(
-                    `/api/global_stats?start=${start}&end=${end}&min_dur=${minDur}&max_gap=${maxGap}`,
-                );
-                const data = await res.json();
+                try {
+                    const minDur =
+                        localStorage.getItem("cfgMinSession") || "60";
+                    const maxGap = localStorage.getItem("cfgMaxGap") || "300";
+                    const res = await fetch(
+                        `/api/global_stats?start=${start}&end=${end}&min_dur=${minDur}&max_gap=${maxGap}`,
+                    ).catch(() => null);
+                    if (!res || !res.ok) return;
+                    const data = await res.json().catch(() => null);
+                    if (!data) return;
 
-                rangeEl.textContent = `Insights du ${start} au ${end}`;
-                document.getElementById("statZapping").textContent =
-                    data.zapping_index.toFixed(2);
-                document.getElementById("statFriction").textContent = fmtMins(
-                    data.avg_gap,
-                );
-                document.getElementById("statAvgGames").textContent =
-                    data.avg_games_per_day
-                        ? data.avg_games_per_day.toFixed(1)
-                        : "-";
-                document.getElementById("statFidelity").textContent =
-                    data.fidelity_index
-                        ? Math.round(data.fidelity_index * 100) + "%"
-                        : "-";
-                document.getElementById("statPeak").textContent =
-                    data.peak_time || "-";
+                    rangeEl.textContent = `Insights du ${start} au ${end}`;
+                    document.getElementById("statZapping").textContent =
+                        data.zapping_index.toFixed(2);
+                    document.getElementById("statFriction").textContent =
+                        fmtMins(data.avg_gap);
+                    document.getElementById("statAvgGames").textContent =
+                        data.avg_games_per_day
+                            ? data.avg_games_per_day.toFixed(1)
+                            : "-";
+                    document.getElementById("statFidelity").textContent =
+                        data.fidelity_index
+                            ? Math.round(data.fidelity_index * 100) + "%"
+                            : "-";
+                    document.getElementById("statPeak").textContent =
+                        data.peak_time || "-";
 
-                // Pie Chart: Session Buckets
-                const ctx = document.getElementById("pieCanvas");
-                const labels = ["Snack (<15m)", "Standard", "Immersion (>1h)"];
-                const values = [
-                    data.session_buckets.snack,
-                    data.session_buckets.standard,
-                    data.session_buckets.immersion,
-                ];
-                if (chart) chart.destroy();
-                chart = new Chart(ctx, {
-                    type: "pie",
-                    data: {
-                        labels,
-                        datasets: [
-                            {
-                                data: values,
-                                backgroundColor: [
-                                    "#f87171",
-                                    "#60a5fa",
-                                    "#10b981",
-                                ],
-                            },
-                        ],
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: "Répartition des types de sessions",
+                    // Pie Chart: Session Buckets
+                    const ctx = document.getElementById("pieCanvas");
+                    const labels = [
+                        "Snack (<15m)",
+                        "Standard",
+                        "Immersion (>1h)",
+                    ];
+                    const values = [
+                        data.session_buckets.snack,
+                        data.session_buckets.standard,
+                        data.session_buckets.immersion,
+                    ];
+                    if (chart) chart.destroy();
+                    chart = new Chart(ctx, {
+                        type: "pie",
+                        data: {
+                            labels,
+                            datasets: [
+                                {
+                                    data: values,
+                                    backgroundColor: [
+                                        "#f87171",
+                                        "#60a5fa",
+                                        "#10b981",
+                                    ],
+                                },
+                            ],
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                title: {
+                                    display: true,
+                                    text: "Répartition des types de sessions",
+                                },
                             },
                         },
-                    },
-                });
+                    });
 
-                // Update Session Profile list
-                const profileEl = document.getElementById("sessionProfile");
-                profileEl.innerHTML = "";
-                const total = values.reduce((a, b) => a + b, 0);
-                labels.forEach((lbl, i) => {
-                    const pct =
-                        total > 0 ? Math.round((values[i] / total) * 100) : 0;
-                    const div = document.createElement("div");
-                    div.className = "small";
-                    div.innerHTML = `<div style="display:flex; justify-content:space-between;"><span>${lbl}</span><span>${pct}%</span></div>
+                    // Update Session Profile list
+                    const profileEl = document.getElementById("sessionProfile");
+                    profileEl.innerHTML = "";
+                    const total = values.reduce((a, b) => a + b, 0);
+                    labels.forEach((lbl, i) => {
+                        const pct =
+                            total > 0
+                                ? Math.round((values[i] / total) * 100)
+                                : 0;
+                        const div = document.createElement("div");
+                        div.className = "small";
+                        div.innerHTML = `<div style="display:flex; justify-content:space-between;"><span>${lbl}</span><span>${pct}%</span></div>
                                      <div style="height:4px; background:var(--border); border-radius:2px; margin-top:2px;">
                                         <div style="height:100%; width:${pct}%; background:${chart.data.datasets[0].backgroundColor[i]}; border-radius:2px;"></div>
                                      </div>`;
-                    profileEl.appendChild(div);
-                });
+                        profileEl.appendChild(div);
+                    });
 
-                legendPanelPie.innerHTML =
-                    '<p class="small">Vue globale active : statistiques agrégées.</p>';
+                    legendPanelPie.innerHTML =
+                        '<p class="small">Vue globale active : statistiques agrégées.</p>';
 
-                renderWeeklyHeatmap(data.weekly_heatmap);
+                    renderWeeklyHeatmap(data.weekly_heatmap);
+                } catch (e) {
+                    console.error(e);
+                }
             }
 
             async function loadHeatmap() {
@@ -1593,8 +1857,16 @@
                         "month";
                     qs.set("by", by);
                 }
-                const res = await fetch(`/api/series?` + qs.toString());
-                const data = await res.json();
+                const res = await fetch(`/api/series?` + qs.toString()).catch(
+                    () => null,
+                );
+                if (!res || !res.ok) return;
+                const data = await res.json().catch(() => ({
+                    items: [],
+                    labels: [],
+                    matrix: [],
+                    games: [],
+                }));
                 rangeEl.textContent = `Du ${data.start} au ${data.end}`;
                 const labels = data.labels;
                 const games = data.games;

@@ -16,6 +16,8 @@ type GameMeta struct {
 	Name             string `db:"name" json:"name"`
 	IsNew            bool   `db:"is_new" json:"is_new"`
 	FinishedInPeriod bool   `db:"finished_in_period" json:"finished_in_period"`
+	IconURL          string `db:"icon_url" json:"icon_url"`
+	AppID            int    `db:"appid" json:"appid"`
 }
 
 // KnownProc summarizes a known (display) process with flags
@@ -342,12 +344,16 @@ func (db *Database) GetGamesMetaBetween(startDate, endDate string) ([]GameMeta, 
 	    GROUP BY COALESCE(r.display_name, b.process_name)
 	)
 	SELECT gip.name AS name,
-	       CASE WHEN COALESCE(ov.first_date, fe.first_date) >= ? AND COALESCE(ov.first_date, fe.first_date) <= ? THEN 1 ELSE 0 END AS is_new,
-	       CASE WHEN fg.finished_at IS NOT NULL AND fg.finished_at >= ? AND fg.finished_at <= ? THEN 1 ELSE 0 END AS finished_in_period
+	       MAX(CASE WHEN COALESCE(ov.first_date, fe.first_date) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS is_new,
+	       MAX(CASE WHEN fg.finished_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS finished_in_period,
+	       COALESCE(MAX(sm.icon_url), '') AS icon_url,
+	       COALESCE(MAX(sm.appid), 0) AS appid
 	FROM games_in_period gip
 	LEFT JOIN first_ever fe ON fe.name = gip.name
 	LEFT JOIN first_launch_override ov ON ov.name = gip.name
 	LEFT JOIN finished_games fg ON fg.name = gip.name
+	LEFT JOIN steam_mapping sm ON sm.game_name = gip.name
+	GROUP BY gip.name
 	ORDER BY gip.name COLLATE NOCASE
 	`
 	if err := db.Select(&rows, q, startDate, endDate, startDate, endDate, startDate, endDate); err != nil {

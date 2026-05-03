@@ -83,7 +83,8 @@ func mainProgram() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	processMonitor := NewProcessMonitor(db)
+	steamMgr := manager.NewSteamManager(db)
+	processMonitor := NewProcessMonitor(db, steamMgr)
 	lm, err := manager.NewListManager(db.DB)
 	if err != nil {
 		log.Fatal(err)
@@ -117,13 +118,15 @@ func mainProgram() {
 type ProcessMonitor struct {
 	trackers     map[int32]*ProcessTracker
 	db           *query.Database
+	steam        *manager.SteamManager
 	trackerMutex sync.Mutex
 }
 
-func NewProcessMonitor(db *query.Database) *ProcessMonitor {
+func NewProcessMonitor(db *query.Database, steam *manager.SteamManager) *ProcessMonitor {
 	return &ProcessMonitor{
 		trackers: make(map[int32]*ProcessTracker),
 		db:       db,
+		steam:    steam,
 	}
 }
 
@@ -162,6 +165,20 @@ func (pm *ProcessMonitor) handleProcessExit(tracker *ProcessTracker) {
 		EndTime:     tracker.EndTime,
 		Duration:    tracker.EndTime.Sub(tracker.StartTime),
 	})
+
+	// Synchronisation des succès après la session
+	go func() {
+		mapping, _ := pm.db.GetSteamMapping(tracker.Name)
+		if mapping != nil {
+			newlyUnlocked, err := pm.steam.SyncAchievements(mapping.AppID)
+			if err == nil && newlyUnlocked > 0 && pm.db.GetNotificationEnabled() {
+				title := "Nouveaux succès !"
+				msg := fmt.Sprintf("%d nouveaux succès débloqués pour %s", newlyUnlocked, mapping.GameName)
+				pm.steam.SendNotification(title, msg)
+				log.Printf("[Steam] %s", msg)
+			}
+		}
+	}()
 }
 
 type ProcessTracker struct {
@@ -264,6 +281,9 @@ func (pm *ProcessMonitor) processCheck(p *process.Process, listManager *manager.
 				// On enregistre aussi la version sans .exe par sécurité pour l'affichage
 				pm.db.UpsertRename(cleanOriginal, friendlyName)
 			}
+
+			// Tenter de mapper le processus à Steam pour l'icône et les succès
+			go pm.steam.TryMatchProcessToSteam(originalName, friendlyName)
 		}
 
 		pm.StartTracking(p.Pid)

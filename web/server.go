@@ -3,6 +3,7 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -23,12 +24,17 @@ var staticFS embed.FS
 type Server struct {
 	db *query.Database
 	lm *manager.ListManager
+	sm *manager.SteamManager
 }
 
 func StartServer(db *query.Database, lm *manager.ListManager) {
-	s := &Server{db: db, lm: lm}
+	sm := manager.NewSteamManager(db)
+	s := &Server{db: db, lm: lm, sm: sm}
 
 	http.HandleFunc("/", s.handleIndex)
+	http.HandleFunc("/api/steam/settings", s.handleSteamSettings)
+	http.HandleFunc("/api/steam/sync", s.handleSteamSync)
+	http.HandleFunc("/api/steam/achievements", s.handleSteamAchievements)
 	http.HandleFunc("/history", s.handleHistoryPage)
 	http.HandleFunc("/config", s.handleConfigPage)
 	http.Handle("/static/", http.FileServer(http.FS(staticFS)))
@@ -998,6 +1004,77 @@ func writeJSON(w http.ResponseWriter, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	enc.Encode(v)
+}
+
+func (s *Server) handleSteamSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var data struct {
+			APIKey               string `json:"api_key"`
+			SteamID              string `json:"steam_id"`
+			NotificationsEnabled bool   `json:"notifications_enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = s.db.SetSetting("steam_api_key", data.APIKey)
+		_ = s.db.SetSetting("steam_id", data.SteamID)
+		_ = s.db.SetNotificationEnabled(data.NotificationsEnabled)
+		writeJSON(w, map[string]string{"status": "ok"})
+		return
+	}
+
+	apiKey, _ := s.db.GetSteamAPIKey()
+	steamID, _ := s.db.GetSteamID()
+	notifications := s.db.GetNotificationEnabled()
+
+	writeJSON(w, map[string]any{
+		"api_key":               apiKey,
+		"steam_id":              steamID,
+		"notifications_enabled": notifications,
+	})
+}
+
+func (s *Server) handleSteamSync(w http.ResponseWriter, r *http.Request) {
+	go func() {
+		_ = s.sm.SyncOwnedGames()
+		// On pourrait itérer sur les jeux connus pour synchroniser les succès
+		processes, _ := s.db.GetAllKnownProcesses()
+		for _, p := range processes {
+			mapping, _ := s.db.GetSteamMapping(p.Name)
+			if mapping != nil {
+				_, _ = s.sm.SyncAchievements(mapping.AppID)
+			}
+		}
+	}()
+	writeJSON(w, map[string]string{"status": "sync_started"})
+}
+
+func (s *Server) handleSteamAchievements(w http.ResponseWriter, r *http.Request) {
+	appidStr := r.URL.Query().Get("appid")
+	if appidStr != "" {
+		var appid int
+		fmt.Sscanf(appidStr, "%d", &appid)
+		achs, err := s.db.GetAchievementsForApp(appid)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, achs)
+		return
+	}
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		fmt.Sscanf(limitStr, "%d", &limit)
+	}
+	achs, err := s.db.GetRecentAchievements(limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, achs)
 }
 
 func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
