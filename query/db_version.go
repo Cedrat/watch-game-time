@@ -2,7 +2,6 @@ package query
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -70,12 +69,17 @@ func InitDatabase() (*Database, error) {
 
 	exist, err := db.TableExists(TableDatabaseVersion)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("InitDatabase: %w", err)
 	}
 	if exist {
-		db.updateDb()
-
+		fmt.Printf("[DB] Database found, checking for updates...\n")
+		err = db.updateDb()
+		if err != nil {
+			fmt.Printf("[DB] CRITICAL: Update failed: %v\n", err)
+			return nil, err
+		}
 	} else {
+		fmt.Println("[DB] Initializing new database...")
 
 		// Créer la table si elle n'existe pas
 		_, err = db.Exec(`
@@ -143,9 +147,38 @@ func InitDatabase() (*Database, error) {
 			return nil, err
 		}
 
-		// Set latest version (8) for fresh DB
+		// Create steam integration tables
 		_, err = db.Exec(`
-			UPDATE database_version SET db_version=8;
+	CREATE TABLE IF NOT EXISTS app_settings (
+		key TEXT PRIMARY KEY,
+		value TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS steam_mapping (
+		process_name TEXT PRIMARY KEY,
+		appid INTEGER NOT NULL,
+		game_name TEXT,
+		icon_url TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS achievements (
+		appid INTEGER NOT NULL,
+		apiname TEXT NOT NULL,
+		name TEXT,
+		description TEXT,
+		icon_url TEXT,
+		unlocked_at INTEGER,
+		is_hidden BOOLEAN DEFAULT FALSE,
+		PRIMARY KEY (appid, apiname)
+	);
+	`)
+		if err != nil {
+			return nil, err
+		}
+
+		// Set latest version (9) for fresh DB
+		_, err = db.Exec(`
+			UPDATE database_version SET db_version=9;
 		`)
 		if err != nil {
 			return nil, err
@@ -168,27 +201,36 @@ func (db *Database) updateDb() error {
 	var err error
 	dbVersion, err := db.GetDbVersion()
 	if err != nil {
-		return fmt.Errorf("updateDb: %w", err)
+		return fmt.Errorf("updateDb version fetch: %w", err)
 	}
-	tx := db.MustBegin().Tx
+
+	fmt.Printf("[DB] Current version: %d\n", dbVersion)
+
+	tx, err := db.Beginx()
+	if err != nil {
+		return fmt.Errorf("updateDb: failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	if dbVersion < 1 {
+		fmt.Println("[DB] Updating to version 1...")
 		_, err = tx.Exec(`ALTER TABLE activities DROP COLUMN window_title`)
 		if err != nil {
-			return fmt.Errorf("updateDb: %w", err)
+			return fmt.Errorf("updateDb version 1 drop: %w", err)
 		}
 		_, err = tx.Exec(`ALTER TABLE activities ADD COLUMN first_launch BOOLEAN DEFAULT FALSE`)
 		if err != nil {
-			return fmt.Errorf("updateDb: %w", err)
+			return fmt.Errorf("updateDb version 1 add: %w", err)
 		}
 		_, err = tx.Exec(`UPDATE database_version SET db_version=1`)
 		if err != nil {
-			return fmt.Errorf("updateDb: %w", err)
+			return fmt.Errorf("updateDb version 1 update: %w", err)
 		}
-		fmt.Println("db version up to 1")
 	}
 
 	if dbVersion < 2 {
-		_, err = db.Exec(`
+		fmt.Println("[DB] Updating to version 2...")
+		_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS whitelist (
 			name TEXT PRIMARY KEY
 		);
@@ -202,11 +244,11 @@ func (db *Database) updateDb() error {
 		if err != nil {
 			return fmt.Errorf("updateDb version 2: %w", err)
 		}
-		fmt.Println("db version up to 2")
 	}
 
 	if dbVersion < 3 {
-		_, err = db.Exec(`
+		fmt.Println("[DB] Updating to version 3...")
+		_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS rename_map (
 			original_name TEXT PRIMARY KEY,
 			display_name TEXT NOT NULL
@@ -217,11 +259,11 @@ func (db *Database) updateDb() error {
 		if err != nil {
 			return fmt.Errorf("updateDb version 3: %w", err)
 		}
-		fmt.Println("db version up to 3")
 	}
 
 	if dbVersion < 4 {
-		_, err = db.Exec(`
+		fmt.Println("[DB] Updating to version 4...")
+		_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS finished_games (
 			name TEXT PRIMARY KEY
 		);
@@ -231,22 +273,22 @@ func (db *Database) updateDb() error {
 		if err != nil {
 			return fmt.Errorf("updateDb version 4: %w", err)
 		}
-		fmt.Println("db version up to 4")
 	}
 
 	if dbVersion < 5 {
-		_, err = db.Exec(`
+		fmt.Println("[DB] Updating to version 5...")
+		_, err = tx.Exec(`
 		ALTER TABLE finished_games ADD COLUMN finished_at TEXT;
 		UPDATE database_version SET db_version=5;
 		`)
 		if err != nil {
 			return fmt.Errorf("updateDb version 5: %w", err)
 		}
-		fmt.Println("db version up to 5")
 	}
 
 	if dbVersion < 6 {
-		_, err = db.Exec(`
+		fmt.Println("[DB] Updating to version 6...")
+		_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS first_launch_override (
 			name TEXT PRIMARY KEY,
 			first_date TEXT
@@ -256,21 +298,21 @@ func (db *Database) updateDb() error {
 		if err != nil {
 			return fmt.Errorf("updateDb version 6: %w", err)
 		}
-		fmt.Println("db version up to 6")
 	}
 
 	if dbVersion < 7 {
-		_, err = db.Exec(`
+		fmt.Println("[DB] Updating to version 7...")
+		_, err = tx.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_activities_unique ON activities(process_name, start_time, end_time);
 		UPDATE database_version SET db_version=7;
 		`)
 		if err != nil {
 			return fmt.Errorf("updateDb version 7: %w", err)
 		}
-		fmt.Println("db version up to 7")
 	}
 
 	if dbVersion < 8 {
+		fmt.Println("[DB] Updating to version 8 (splitting historical sessions)...")
 		// Retro-compatibility: split historical sessions spanning midnight into day-bounded segments
 		type actRow struct {
 			ID          int64   `db:"id"`
@@ -286,12 +328,11 @@ func (db *Database) updateDb() error {
 		      FROM activities
 		      WHERE substr(start_time,1,10) != substr(end_time,1,10)
 		         OR date != substr(start_time,1,10)`
-		if err := db.Select(&rows, q); err != nil {
+		if err := tx.Select(&rows, q); err != nil {
 			return fmt.Errorf("updateDb version 8 select: %w", err)
 		}
 
 		if len(rows) > 0 {
-			trx := db.MustBegin()
 			for _, r := range rows {
 				start, err1 := time.Parse(time.RFC3339, r.Start)
 				end, err2 := time.Parse(time.RFC3339, r.End)
@@ -311,12 +352,11 @@ func (db *Database) updateDb() error {
 					}
 					if segmentEnd.After(currentStart) {
 						dateStr := currentStart.Format("2006-01-02")
-						_, err := trx.Exec(`
+						_, err := tx.Exec(`
 							INSERT INTO activities (process_name, start_time, end_time, duration, date, first_launch)
 							VALUES (?, ?, ?, ?, ?, ?)
 						`, r.ProcessName, currentStart.Format(time.RFC3339), segmentEnd.Format(time.RFC3339), segmentEnd.Sub(currentStart).Seconds(), dateStr, firstFlag)
 						if err != nil {
-							trx.Rollback()
 							return fmt.Errorf("updateDb version 8 insert: %w", err)
 						}
 						firstFlag = false
@@ -324,27 +364,70 @@ func (db *Database) updateDb() error {
 					currentStart = segmentEnd
 				}
 				// Delete original row after inserting the split segments
-				if _, err := trx.Exec(`DELETE FROM activities WHERE id = ?`, r.ID); err != nil {
-					trx.Rollback()
+				if _, err := tx.Exec(`DELETE FROM activities WHERE id = ?`, r.ID); err != nil {
 					return fmt.Errorf("updateDb version 8 delete: %w", err)
 				}
 			}
-			if err := trx.Commit(); err != nil {
-				return fmt.Errorf("updateDb version 8 commit: %w", err)
-			}
 		}
 
-		_, err = db.Exec(`UPDATE database_version SET db_version=8;`)
+		_, err = tx.Exec(`UPDATE database_version SET db_version=8;`)
 		if err != nil {
 			return fmt.Errorf("updateDb version 8: %w", err)
 		}
-		fmt.Println("db version up to 8 (historical sessions split)")
+	}
+
+	if dbVersion < 9 {
+		fmt.Println("[DB] Updating to version 9 (Steam integration)...")
+		_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS app_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT
+		);
+
+		CREATE TABLE IF NOT EXISTS steam_mapping (
+			process_name TEXT PRIMARY KEY,
+			appid INTEGER NOT NULL,
+			game_name TEXT,
+			icon_url TEXT
+		);
+
+		CREATE TABLE IF NOT EXISTS achievements (
+			appid INTEGER NOT NULL,
+			apiname TEXT NOT NULL,
+			name TEXT,
+			description TEXT,
+			icon_url TEXT,
+			unlocked_at INTEGER,
+			is_hidden BOOLEAN DEFAULT FALSE,
+			PRIMARY KEY (appid, apiname)
+		);
+
+		UPDATE database_version SET db_version=9;
+		`)
+		if err != nil {
+			return fmt.Errorf("updateDb version 9: %w", err)
+		}
+	}
+
+	if dbVersion < 10 {
+		fmt.Println("[DB] Updating to version 10 (Local Steam Games Cache)...")
+		_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS steam_owned_games (
+			appid INTEGER PRIMARY KEY,
+			game_name TEXT,
+			icon_url TEXT
+		);
+		UPDATE database_version SET db_version=10;
+		`)
+		if err != nil {
+			return fmt.Errorf("updateDb version 10: %w", err)
+		}
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		tx.Rollback()
-		return fmt.Errorf("updateDb: error at commit rollback: %w", err)
+		return fmt.Errorf("updateDb: error at commit: %w", err)
 	}
+	fmt.Println("[DB] Migration successful")
 	return nil
 }

@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -15,6 +16,8 @@ type GameMeta struct {
 	Name             string `db:"name" json:"name"`
 	IsNew            bool   `db:"is_new" json:"is_new"`
 	FinishedInPeriod bool   `db:"finished_in_period" json:"finished_in_period"`
+	IconURL          string `db:"icon_url" json:"icon_url"`
+	AppID            int    `db:"appid" json:"appid"`
 }
 
 // KnownProc summarizes a known (display) process with flags
@@ -325,7 +328,9 @@ func (db *Database) GetGamesMetaBetween(startDate, endDate string) ([]GameMeta, 
 	    SELECT a.*, substr(a.start_time,1,10) AS sdate
 	    FROM activities a
 	), games_in_period AS (
-	    SELECT DISTINCT COALESCE(r.display_name, b.process_name) AS name
+	    SELECT
+	        b.process_name,
+	        COALESCE(r.display_name, b.process_name) AS name
 	    FROM base b
 	    LEFT JOIN rename_map r ON r.original_name = b.process_name
 	    WHERE b.sdate >= ? AND b.sdate <= ?
@@ -333,6 +338,7 @@ func (db *Database) GetGamesMetaBetween(startDate, endDate string) ([]GameMeta, 
 	        SELECT 1 FROM blacklist bx
 	        WHERE bx.name = b.process_name OR bx.name = COALESCE(r.display_name, b.process_name)
 	      )
+	    GROUP BY b.process_name, COALESCE(r.display_name, b.process_name)
 	), first_ever AS (
 	    SELECT COALESCE(r.display_name, b.process_name) AS name,
 	           MIN(b.sdate) AS first_date
@@ -341,12 +347,17 @@ func (db *Database) GetGamesMetaBetween(startDate, endDate string) ([]GameMeta, 
 	    GROUP BY COALESCE(r.display_name, b.process_name)
 	)
 	SELECT gip.name AS name,
-	       CASE WHEN COALESCE(ov.first_date, fe.first_date) >= ? AND COALESCE(ov.first_date, fe.first_date) <= ? THEN 1 ELSE 0 END AS is_new,
-	       CASE WHEN fg.finished_at IS NOT NULL AND fg.finished_at >= ? AND fg.finished_at <= ? THEN 1 ELSE 0 END AS finished_in_period
+	       MAX(CASE WHEN COALESCE(ov.first_date, fe.first_date) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS is_new,
+	       MAX(CASE WHEN fg.finished_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS finished_in_period,
+	       COALESCE(MAX(sm.icon_url), MAX(sog.icon_url), '') AS icon_url,
+	       COALESCE(MAX(sm.appid), MAX(sog.appid), 0) AS appid
 	FROM games_in_period gip
 	LEFT JOIN first_ever fe ON fe.name = gip.name
 	LEFT JOIN first_launch_override ov ON ov.name = gip.name
 	LEFT JOIN finished_games fg ON fg.name = gip.name
+	LEFT JOIN steam_mapping sm ON sm.process_name = gip.process_name
+	LEFT JOIN steam_owned_games sog ON sog.game_name = gip.name
+	GROUP BY gip.name
 	ORDER BY gip.name COLLATE NOCASE
 	`
 	if err := db.Select(&rows, q, startDate, endDate, startDate, endDate, startDate, endDate); err != nil {
@@ -584,4 +595,221 @@ func (db *Database) GetGameStats(name string, minDur, maxGap float64) (*GameStat
 	stats.LastSession = last.Local().Format("2006-01-02 15:04:05")
 
 	return stats, nil
+}
+
+// GlobalInsights represents aggregated statistics for all games
+type GlobalInsights struct {
+	AvgDuration       float64        `json:"avg_duration"`
+	HourlyDist        []int          `json:"hourly_dist"`
+	DailyDist         []float64      `json:"daily_dist"`
+	SessionBuckets    map[string]int `json:"session_buckets"`
+	HourlyAvgDuration []float64      `json:"hourly_avg_duration"`
+	AvgGap            float64        `json:"avg_gap"`
+	ZappingIndex      float64        `json:"zapping_index"`
+	AvgGamesPerDay    float64        `json:"avg_games_per_day"`
+	FidelityIndex     float64        `json:"fidelity_index"`
+	PeakTime          string         `json:"peak_time"`
+	WeeklyHeatmap     [][]int        `json:"weekly_heatmap"`
+}
+
+func (db *Database) GetGlobalInsights(startDate, endDate string, minDur, maxGap float64) (*GlobalInsights, error) {
+	insights := &GlobalInsights{
+		HourlyDist:        make([]int, 24),
+		DailyDist:         make([]float64, 7),
+		SessionBuckets:    map[string]int{"snack": 0, "standard": 0, "immersion": 0},
+		HourlyAvgDuration: make([]float64, 24),
+		WeeklyHeatmap:     make([][]int, 7),
+	}
+	for i := 0; i < 7; i++ {
+		insights.WeeklyHeatmap[i] = make([]int, 24)
+	}
+
+	q := `
+	WITH resolved AS (
+		SELECT a.*, COALESCE(r.display_name, a.process_name) as name, substr(a.start_time,1,10) AS sdate
+		FROM activities a
+		LEFT JOIN rename_map r ON r.original_name = a.process_name
+	)
+	SELECT name, start_time, end_time, duration
+	FROM resolved
+	WHERE sdate >= ? AND sdate <= ?
+	  AND NOT EXISTS (
+	    SELECT 1 FROM blacklist bx
+	    WHERE bx.name = resolved.process_name OR bx.name = resolved.name
+	  )
+	ORDER BY name, start_time ASC`
+
+	rows, err := db.Query(q, startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type session struct {
+		name  string
+		start time.Time
+		end   time.Time
+	}
+	var byGame = make(map[string][]session)
+	for rows.Next() {
+		var name, s, e string
+		var d float64
+		if err := rows.Scan(&name, &s, &e, &d); err == nil {
+			st, _ := time.Parse(time.RFC3339, s)
+			et, _ := time.Parse(time.RFC3339, e)
+			byGame[name] = append(byGame[name], session{name, st, et})
+		}
+	}
+
+	var allVirtual []session
+	for _, raw := range byGame {
+		if len(raw) == 0 {
+			continue
+		}
+		current := raw[0]
+		for i := 1; i < len(raw); i++ {
+			if raw[i].start.Sub(current.end).Seconds() <= maxGap {
+				current.end = raw[i].end
+			} else {
+				if current.end.Sub(current.start).Seconds() >= minDur {
+					allVirtual = append(allVirtual, current)
+				}
+				current = raw[i]
+			}
+		}
+		if current.end.Sub(current.start).Seconds() >= minDur {
+			allVirtual = append(allVirtual, current)
+		}
+	}
+
+	if len(allVirtual) == 0 {
+		return insights, nil
+	}
+
+	hourlyTotalDur := make([]float64, 24)
+	hourlyCount := make([]int, 24)
+	dailyTotal := make([]float64, 7)
+	dailyDates := make([]map[string]bool, 7)
+	for i := 0; i < 7; i++ {
+		dailyDates[i] = make(map[string]bool)
+	}
+
+	var totalDur float64
+	uniqueGames := make(map[string]bool)
+	gameDurations := make(map[string]float64)
+	gamesPerDay := make(map[string]map[string]bool)
+	weeklyHourlyDist := [7][24]int{}
+
+	for _, vs := range allVirtual {
+		dur := vs.end.Sub(vs.start).Seconds()
+		totalDur += dur
+		uniqueGames[vs.name] = true
+
+		localStart := vs.start.Local()
+		localEnd := vs.end.Local()
+		hour := localStart.Hour()
+		dow := int(localStart.Weekday())
+		dateStr := localStart.Format("2006-01-02")
+
+		// Track presence for every hour touched by the session
+		currH := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), localStart.Hour(), 0, 0, 0, localStart.Location())
+		for currH.Before(localEnd) {
+			h := currH.Hour()
+			d := int(currH.Weekday())
+			insights.HourlyDist[h]++
+			weeklyHourlyDist[d][h]++
+			insights.WeeklyHeatmap[d][h]++
+			currH = currH.Add(time.Hour)
+		}
+
+		hourlyTotalDur[hour] += dur
+		hourlyCount[hour]++
+
+		dailyTotal[dow] += dur
+		dailyDates[dow][dateStr] = true
+
+		if gamesPerDay[dateStr] == nil {
+			gamesPerDay[dateStr] = make(map[string]bool)
+		}
+		gamesPerDay[dateStr][vs.name] = true
+		gameDurations[vs.name] += dur
+
+		if dur < 900 {
+			insights.SessionBuckets["snack"]++
+		} else if dur > 3600 {
+			insights.SessionBuckets["immersion"]++
+		} else {
+			insights.SessionBuckets["standard"]++
+		}
+	}
+
+	for i := 0; i < 24; i++ {
+		if hourlyCount[i] > 0 {
+			insights.HourlyAvgDuration[i] = hourlyTotalDur[i] / float64(hourlyCount[i])
+		}
+	}
+	for i := 0; i < 7; i++ {
+		if len(dailyDates[i]) > 0 {
+			insights.DailyDist[i] = dailyTotal[i] / float64(len(dailyDates[i]))
+		}
+	}
+
+	insights.AvgDuration = totalDur / float64(len(allVirtual))
+	insights.ZappingIndex = float64(len(uniqueGames)) / ((totalDur / 3600.0) + 1.0)
+
+	if len(gamesPerDay) > 0 {
+		totalUnique := 0
+		for d := range gamesPerDay {
+			totalUnique += len(gamesPerDay[d])
+		}
+		insights.AvgGamesPerDay = float64(totalUnique) / float64(len(gamesPerDay))
+	}
+
+	if totalDur > 0 {
+		var durs []float64
+		for _, d := range gameDurations {
+			durs = append(durs, d)
+		}
+		sort.Float64s(durs)
+		top3 := 0.0
+		for i := 0; i < 3 && i < len(durs); i++ {
+			top3 += durs[len(durs)-1-i]
+		}
+		insights.FidelityIndex = top3 / totalDur
+	}
+
+	maxCount := -1
+	peakD, peakH := 0, 0
+	daysFR := []string{"Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"}
+	for d := 0; d < 7; d++ {
+		for h := 0; h < 24; h++ {
+			if weeklyHourlyDist[d][h] > maxCount {
+				maxCount = weeklyHourlyDist[d][h]
+				peakD, peakH = d, h
+			}
+		}
+	}
+	if maxCount > 0 {
+		insights.PeakTime = fmt.Sprintf("%s %dh", daysFR[peakD], peakH)
+	}
+
+	// Friction: average time between consecutive sessions regardless of game
+	sort.Slice(allVirtual, func(i, j int) bool {
+		return allVirtual[i].start.Before(allVirtual[j].start)
+	})
+
+	var totalGap float64
+	var gapCount int
+	for i := 0; i < len(allVirtual)-1; i++ {
+		gap := allVirtual[i+1].start.Sub(allVirtual[i].end).Seconds()
+		if gap > 0 {
+			totalGap += gap
+			gapCount++
+		}
+	}
+	if gapCount > 0 {
+		insights.AvgGap = totalGap / float64(gapCount)
+	}
+
+	return insights, nil
 }

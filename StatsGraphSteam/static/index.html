@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StatsGraphSteam</title>
+  <link rel="stylesheet" href="/stats/static/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎮</span>
+      <h1>StatsGraphSteam</h1>
+    </div>
+    <nav>
+      <a href="/" style="color:var(--text-dim);text-decoration:none;font-size:14px;margin-right:8px">← Tableau de bord</a>
+      <button id="tab-main" class="tab active" data-tab="main">Analyse</button>
+      <button id="tab-settings" class="tab" data-tab="settings">Paramètres</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Onglet principal -->
+    <section id="tab-content-main" class="tab-content active">
+      <div class="controls card">
+        <div class="field search-field">
+          <label for="search">Recherche (nom ou AppID)</label>
+          <div class="search-wrap">
+            <input id="search" type="text" placeholder="ex: Counter-Strike 2, Portal, 730…" autocomplete="off" />
+            <ul id="search-suggest" class="search-suggest" hidden></ul>
+          </div>
+        </div>
+        <div class="field">
+          <label for="lang">Langue</label>
+          <select id="lang">
+            <option value="french" selected>Français</option>
+            <option value="english">English</option>
+            <option value="spanish">Español</option>
+            <option value="german">Deutsch</option>
+          </select>
+        </div>
+        <button id="btn-load" class="primary">Charger</button>
+      </div>
+
+      <div id="status" class="status"></div>
+
+      <div class="layout" id="layout">
+        <div class="panel card" id="panel-left">
+          <div class="panel-header">
+            <h2>Succès disponibles</h2>
+            <div class="list-actions">
+              <input id="filter" type="search" placeholder="Filtrer…" />
+              <button id="btn-select-all" class="ghost small">Tout sélectionner</button>
+              <button id="btn-select-none" class="ghost small">Tout désélectionner</button>
+            </div>
+          </div>
+          <p class="hint">Glissez les succès vers la zone de graphique →</p>
+          <ul id="ach-list" class="ach-list"></ul>
+        </div>
+
+        <div class="resizer" id="resizer"></div>
+
+        <div class="panel card" id="panel-right">
+          <div class="panel-header">
+            <h2>Graphique</h2>
+            <div class="chart-controls">
+              <div class="axis-select">
+                <label for="axis">Axe Y :</label>
+                <select id="axis">
+                  <option value="abandon">Taux d'abandon (%)</option>
+                  <option value="percent" selected>Taux de complétion (%)</option>
+                </select>
+              </div>
+              <select id="chart-type">
+                <option value="bar">Barres</option>
+                <option value="line" selected>Courbe</option>
+              </select>
+              <button id="btn-swap-axes" class="ghost" title="Inverser les axes X/Y">⇄ Inverser</button>
+              <button id="btn-expand" class="ghost" title="Agrandir le graphique">⛶ Agrandir</button>
+            </div>
+          </div>
+          <div id="dropzone" class="dropzone">
+            <p class="dropzone-empty">Déposez ici les succès à grapher</p>
+            <div id="chart-wrap" class="chart-wrap" hidden>
+              <canvas id="chart"></canvas>
+            </div>
+          </div>
+          <div id="pan-bar" class="pan-bar" hidden>
+            <button id="pan-first" class="ghost small" title="Début">⏮</button>
+            <input id="pan-slider" type="range" min="0" max="0" value="0" />
+            <button id="pan-last" class="ghost small" title="Fin">⏭</button>
+            <span id="pan-label" class="pan-label">0 / 0</span>
+          </div>
+          <div class="panel-footer">
+            <span id="selected-count">0 succès sélectionné(s)</span>
+            <div class="footer-actions">
+              <button id="btn-clear" class="ghost">Tout effacer</button>
+            </div>
+          </div>
+          <div class="order-section">
+            <div class="order-header">
+              <h3>Ordre des succès</h3>
+              <div class="order-actions">
+                <button id="btn-sort-desc" class="ghost small">↓ Trier (décroissant)</button>
+                <button id="btn-sort-asc" class="ghost small">↑ Trier (croissant)</button>
+              </div>
+            </div>
+            <p class="hint">Glissez-déposez pour réordonner. Le graphique se met à jour en direct.</p>
+            <ul id="order-list" class="order-list"></ul>
+          </div>
+          <div class="export-bar">
+            <span class="export-label">Exporter :</span>
+            <button id="btn-export-png" class="ghost small">🖼 PNG</button>
+            <button id="btn-export-excel" class="ghost small">📊 CSV</button>
+            <button id="btn-export-pdf" class="ghost small">📄 PDF</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Onglet paramètres -->
+    <section id="tab-content-settings" class="tab-content">
+      <div class="card settings">
+        <h2>Paramètres API Steam</h2>
+        <p class="hint">
+          Obtenez votre clé sur
+          <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noopener">
+            steamcommunity.com/dev/apikey</a>.
+          La clé est partagée avec l'application principale (page Configuration).
+        </p>
+        <div id="key-status" class="key-status"></div>
+        <div class="field">
+          <label for="api-key">Clé API Steam</label>
+          <input id="api-key" type="password" placeholder="XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" />
+        </div>
+        <button id="btn-save-key" class="primary">Enregistrer</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/stats/static/app.js"></script>
+</body>
+</html>
