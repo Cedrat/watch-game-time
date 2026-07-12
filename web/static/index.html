@@ -577,6 +577,8 @@
                         style="margin-left: 8px"
                     ></span>
                     <a class="link" href="/history">Historique</a>
+                    <a class="link" href="/library">Bibliothèque</a>
+                    <a class="link" href="/stats">Stats Succès</a>
                     <a class="link" href="/config">Configuration</a>
                     <button id="viewGlobal" class="btn">Vue Globale</button>
                 </div>
@@ -702,13 +704,6 @@
                             ><span id="statLast" class="stat-val">-</span>
                         </div>
                     </div>
-                    <div
-                        id="modalAchievementsSection"
-                        style="display: none; margin-top: 20px"
-                    >
-                        <h4 style="margin: 0 0 10px 0">Succès</h4>
-                        <div id="modalAchievements" class="ach-list"></div>
-                    </div>
                     <div class="modal-charts">
                         <div>
                             <h4 style="margin: 0">Distribution par heure</h4>
@@ -722,6 +717,13 @@
                                 <canvas id="dayChart"></canvas>
                             </div>
                         </div>
+                    </div>
+                    <div
+                        id="modalAchievementsSection"
+                        style="display: none; margin-top: 20px"
+                    >
+                        <h4 style="margin: 0 0 10px 0">Succès</h4>
+                        <div id="modalAchievements" class="ach-list"></div>
                     </div>
                 </div>
             </div>
@@ -876,43 +878,39 @@
                             ? formatDateFR(stats.last_session.slice(0, 10))
                             : "-";
 
-                    gameModal.classList.add("open");
+                    // Charger les succès du jeu (SÉQUENTIELLEMENT maintenant pour éviter le saut visuel)
+                    const modalAchSection = document.getElementById(
+                        "modalAchievementsSection",
+                    );
+                    const modalAchList =
+                        document.getElementById("modalAchievements");
 
-                    // Charger les succès du jeu (non-bloquant)
-                    if (document.getElementById("modalAchievementsSection")) {
-                        (async () => {
-                            const modalAchSection = document.getElementById(
-                                "modalAchievementsSection",
-                            );
-                            const modalAchList =
-                                document.getElementById("modalAchievements");
-                            try {
-                                const meta =
-                                    (typeof lastMeta !== "undefined"
-                                        ? lastMeta[name]
-                                        : null) || {};
-                                let appid = meta.appid;
+                    if (modalAchSection) {
+                        try {
+                            const meta =
+                                (typeof lastMeta !== "undefined"
+                                    ? lastMeta[name]
+                                    : null) || {};
+                            let appid = meta.appid;
 
-                                if (!appid) {
-                                    const metaRes = await fetch(
-                                        `/api/games_meta?period=year`,
-                                    ).catch(() => null);
-                                    if (metaRes && metaRes.ok) {
-                                        const metaData = await metaRes
-                                            .json()
-                                            .catch(() => ({ items: [] }));
-                                        const gameMeta = (
-                                            metaData.items || []
-                                        ).find((it) => it.name === name);
-                                        if (gameMeta) appid = gameMeta.appid;
-                                    }
+                            if (!appid) {
+                                const metaRes = await fetch(
+                                    `/api/games_meta?period=year`,
+                                ).catch(() => null);
+                                if (metaRes && metaRes.ok) {
+                                    const metaData = await metaRes
+                                        .json()
+                                        .catch(() => ({ items: [] }));
+                                    const gameMeta = (
+                                        metaData.items || []
+                                    ).find((it) => it.name === name);
+                                    if (gameMeta) appid = gameMeta.appid;
                                 }
+                            }
 
-                                if (!appid || appid === 0) {
-                                    modalAchSection.style.display = "none";
-                                    return;
-                                }
-
+                            if (!appid || appid === 0) {
+                                modalAchSection.style.display = "none";
+                            } else {
                                 const achRes = await fetch(
                                     `/api/steam/achievements?appid=${appid}`,
                                 ).catch(() => null);
@@ -923,7 +921,15 @@
                                     if (gameAchs && gameAchs.length > 0) {
                                         modalAchSection.style.display = "block";
                                         modalAchList.innerHTML = "";
-                                        gameAchs.forEach((ach) => {
+
+                                        const unlockedAchs = gameAchs.filter(
+                                            (ach) => ach.unlocked_at > 0,
+                                        );
+                                        const missingCount =
+                                            gameAchs.length -
+                                            unlockedAchs.length;
+
+                                        unlockedAchs.forEach((ach) => {
                                             const item =
                                                 document.createElement("div");
                                             item.className = "ach-item";
@@ -932,23 +938,39 @@
                                                 <div class="ach-info">
                                                     <span class="ach-name">${ach.name || ach.apiname}</span>
                                                     <div class="ach-desc">${ach.description || ""}</div>
-                                                    <div class="ach-date">${ach.unlocked_at ? new Date(ach.unlocked_at * 1000).toLocaleString() : ""}</div>
+                                                    <div class="ach-date">${ach.unlocked_at ? new Date(ach.unlocked_at * 1000).toLocaleString("fr-FR", { hour12: false }) : ""}</div>
                                                 </div>
                                             `;
                                             modalAchList.appendChild(item);
                                         });
-                                        return;
+
+                                        if (missingCount > 0) {
+                                            const missingItem =
+                                                document.createElement("div");
+                                            missingItem.className = "ach-item";
+                                            missingItem.style.opacity = "0.6";
+                                            missingItem.style.fontStyle =
+                                                "italic";
+                                            missingItem.innerHTML = `
+                                                <div class="ach-info" style="margin-left: 40px;">
+                                                    <span class="ach-name">${missingCount} succès manquants.</span>
+                                                </div>
+                                            `;
+                                            modalAchList.appendChild(
+                                                missingItem,
+                                            );
+                                        }
+                                    } else {
+                                        modalAchSection.style.display = "none";
                                     }
+                                } else {
+                                    modalAchSection.style.display = "none";
                                 }
-                                modalAchSection.style.display = "none";
-                            } catch (e) {
-                                console.warn(
-                                    "Erreur chargement succès modal",
-                                    e,
-                                );
-                                modalAchSection.style.display = "none";
                             }
-                        })();
+                        } catch (e) {
+                            console.warn("Erreur chargement succès modal", e);
+                            modalAchSection.style.display = "none";
+                        }
                     }
 
                     const ctxH = document
@@ -1040,6 +1062,9 @@
                             },
                         },
                     });
+
+                    // On ouvre la modale SEULEMENT quand tout est prêt
+                    gameModal.classList.add("open");
                 } catch (e) {
                     console.error("Erreur stats jeu:", e);
                 }

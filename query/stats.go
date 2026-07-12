@@ -328,7 +328,9 @@ func (db *Database) GetGamesMetaBetween(startDate, endDate string) ([]GameMeta, 
 	    SELECT a.*, substr(a.start_time,1,10) AS sdate
 	    FROM activities a
 	), games_in_period AS (
-	    SELECT DISTINCT COALESCE(r.display_name, b.process_name) AS name
+	    SELECT
+	        b.process_name,
+	        COALESCE(r.display_name, b.process_name) AS name
 	    FROM base b
 	    LEFT JOIN rename_map r ON r.original_name = b.process_name
 	    WHERE b.sdate >= ? AND b.sdate <= ?
@@ -336,6 +338,7 @@ func (db *Database) GetGamesMetaBetween(startDate, endDate string) ([]GameMeta, 
 	        SELECT 1 FROM blacklist bx
 	        WHERE bx.name = b.process_name OR bx.name = COALESCE(r.display_name, b.process_name)
 	      )
+	    GROUP BY b.process_name, COALESCE(r.display_name, b.process_name)
 	), first_ever AS (
 	    SELECT COALESCE(r.display_name, b.process_name) AS name,
 	           MIN(b.sdate) AS first_date
@@ -346,13 +349,14 @@ func (db *Database) GetGamesMetaBetween(startDate, endDate string) ([]GameMeta, 
 	SELECT gip.name AS name,
 	       MAX(CASE WHEN COALESCE(ov.first_date, fe.first_date) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS is_new,
 	       MAX(CASE WHEN fg.finished_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS finished_in_period,
-	       COALESCE(MAX(sm.icon_url), '') AS icon_url,
-	       COALESCE(MAX(sm.appid), 0) AS appid
+	       COALESCE(MAX(sm.icon_url), MAX(sog.icon_url), '') AS icon_url,
+	       COALESCE(MAX(sm.appid), MAX(sog.appid), 0) AS appid
 	FROM games_in_period gip
 	LEFT JOIN first_ever fe ON fe.name = gip.name
 	LEFT JOIN first_launch_override ov ON ov.name = gip.name
 	LEFT JOIN finished_games fg ON fg.name = gip.name
-	LEFT JOIN steam_mapping sm ON sm.game_name = gip.name
+	LEFT JOIN steam_mapping sm ON sm.process_name = gip.process_name
+	LEFT JOIN steam_owned_games sog ON sog.game_name = gip.name
 	GROUP BY gip.name
 	ORDER BY gip.name COLLATE NOCASE
 	`

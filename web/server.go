@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	statsgraphsteam "main/StatsGraphSteam"
+	"main/logger"
 	"main/manager"
 	"main/query"
 )
@@ -35,18 +37,19 @@ func StartServer(db *query.Database, lm *manager.ListManager) {
 	http.HandleFunc("/api/steam/settings", s.handleSteamSettings)
 	http.HandleFunc("/api/steam/sync", s.handleSteamSync)
 	http.HandleFunc("/api/steam/achievements", s.handleSteamAchievements)
+	http.HandleFunc("/api/logs", s.handleLogs)
 	http.HandleFunc("/history", s.handleHistoryPage)
 	http.HandleFunc("/config", s.handleConfigPage)
+	http.HandleFunc("/library", s.handleLibraryPage)
 	http.Handle("/static/", http.FileServer(http.FS(staticFS)))
 
 	http.HandleFunc("/api/summary", s.handleSummary)
 	http.HandleFunc("/api/history", s.handleHistory)
+	http.HandleFunc("/api/library", s.handleLibrary)
 	http.HandleFunc("/api/blacklist", s.handleBlacklist)
 	http.HandleFunc("/api/blacklist/export", s.handleBlacklistExport)
-	http.HandleFunc("/api/blacklist/import", s.handleBlacklistImport)
-	http.HandleFunc("/api/unblacklist", s.handleUnblacklist)
-	http.HandleFunc("/api/whitelist", s.handleWhitelist)
-	http.HandleFunc("/api/unwhitelist", s.handleUnwhitelist)
+	http.HandleFunc("/api/unblacklist", s.handleUnwhitelist)
+	http.HandleFunc("/api/steam/sync_game", s.handleSteamSyncGame)
 	http.HandleFunc("/api/known_processes", s.handleKnownProcesses)
 	http.HandleFunc("/api/rename", s.handleRename)
 	http.HandleFunc("/api/finished", s.handleFinished)
@@ -66,6 +69,9 @@ func StartServer(db *query.Database, lm *manager.ListManager) {
 	http.HandleFunc("/api/day_timeline", s.handleDayTimeline)
 	// Uninstall API
 	http.HandleFunc("/api/uninstall", s.handleUninstall)
+
+	// Mount StatsGraphSteam module under /stats (reuses the shared Steam API key)
+	statsgraphsteam.Register(db)
 
 	go func() {
 		// Bind explicitly to localhost to avoid Windows Firewall prompts
@@ -93,6 +99,88 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 	data, _ := staticFS.ReadFile("static/config.html")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(data)
+}
+
+func (s *Server) handleLibraryPage(w http.ResponseWriter, r *http.Request) {
+	data, _ := staticFS.ReadFile("static/library.html")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(data)
+}
+
+func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
+	minDurStr := r.URL.Query().Get("min_dur")
+	maxGapStr := r.URL.Query().Get("max_gap")
+	hideBL := r.URL.Query().Get("hide_blacklisted") == "1"
+
+	minDur := 60.0
+	if s, err := strconv.ParseFloat(minDurStr, 64); err == nil {
+		minDur = s
+	}
+	maxGap := 300.0
+	if s, err := strconv.ParseFloat(maxGapStr, 64); err == nil {
+		maxGap = s
+	}
+
+	items, err := s.db.GetLibrary(minDur, maxGap, !hideBL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, items)
+}
+
+func (s *Server) handleSteamSyncGame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Find mapping
+	mapping, err := s.db.GetSteamMapping(req.Name) // Try by process name first
+	if err != nil || mapping == nil {
+		// Try to match by display name
+		// We need to find the process name associated with this display name
+		var procName string
+		err = s.db.Get(&procName, `SELECT original_name FROM rename_map WHERE display_name = ?`, req.Name)
+		if err != nil {
+			// Not in rename map, so req.Name is likely the process name
+			procName = req.Name
+		}
+
+		// Try to match it to Steam
+		err = s.sm.TryMatchProcessToSteam(procName, req.Name)
+		if err != nil {
+			http.Error(w, "Could not match game to Steam", http.StatusInternalServerError)
+			return
+		}
+
+		// Get mapping again
+		mapping, err = s.db.GetSteamMapping(procName)
+		if err != nil || mapping == nil {
+			http.Error(w, "Mapping failed", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	newlyUnlocked, iconURL, err := s.sm.SyncSingleGame(mapping.AppID, mapping.ProcessName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"status":         "ok",
+		"newly_unlocked": newlyUnlocked,
+		"icon_url":       iconURL,
+	})
 }
 
 func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
@@ -1012,6 +1100,7 @@ func (s *Server) handleSteamSettings(w http.ResponseWriter, r *http.Request) {
 			APIKey               string `json:"api_key"`
 			SteamID              string `json:"steam_id"`
 			NotificationsEnabled bool   `json:"notifications_enabled"`
+			SteamEnabled         bool   `json:"steam_enabled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1020,6 +1109,7 @@ func (s *Server) handleSteamSettings(w http.ResponseWriter, r *http.Request) {
 		_ = s.db.SetSetting("steam_api_key", data.APIKey)
 		_ = s.db.SetSetting("steam_id", data.SteamID)
 		_ = s.db.SetNotificationEnabled(data.NotificationsEnabled)
+		_ = s.db.SetSteamEnabled(data.SteamEnabled)
 		writeJSON(w, map[string]string{"status": "ok"})
 		return
 	}
@@ -1027,26 +1117,58 @@ func (s *Server) handleSteamSettings(w http.ResponseWriter, r *http.Request) {
 	apiKey, _ := s.db.GetSteamAPIKey()
 	steamID, _ := s.db.GetSteamID()
 	notifications := s.db.GetNotificationEnabled()
+	enabled := s.db.GetSteamEnabled()
+
+	lastSyncTime := s.db.GetSettingDefault("steam_last_sync_time", "Never")
+	lastSyncStatus := s.db.GetSettingDefault("steam_last_sync_status", "Unknown")
+	lastSyncError := s.db.GetSettingDefault("steam_last_sync_error", "")
 
 	writeJSON(w, map[string]any{
 		"api_key":               apiKey,
 		"steam_id":              steamID,
 		"notifications_enabled": notifications,
+		"steam_enabled":         enabled,
+		"last_sync_time":        lastSyncTime,
+		"last_sync_status":      lastSyncStatus,
+		"last_sync_error":       lastSyncError,
 	})
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	logs, err := logger.GetLogs()
+	if err != nil {
+		http.Error(w, "Impossible de lire les logs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(logs))
 }
 
 func (s *Server) handleSteamSync(w http.ResponseWriter, r *http.Request) {
 	go func() {
-		_ = s.sm.SyncOwnedGames()
-		// On pourrait itérer sur les jeux connus pour synchroniser les succès
+		// 1. Sync owned games list
+		err := s.sm.SyncOwnedGames()
+		if err != nil {
+			log.Printf("[SteamSync] Error syncing owned games: %v", err)
+		}
+
+		// 2. Try to map known processes to the new owned games list
 		processes, _ := s.db.GetAllKnownProcesses()
 		for _, p := range processes {
-			mapping, _ := s.db.GetSteamMapping(p.Name)
-			if mapping != nil {
+			// TryMatchProcessToSteam will use the updated cache to link process -> AppID
+			_ = s.sm.TryMatchProcessToSteam(p.Name, p.Name)
+		}
+
+		// 3. Sync achievements for all mapped games
+		for _, p := range processes {
+			mapping, err := s.db.GetSteamMapping(p.Name)
+			if err == nil && mapping != nil {
 				_, _ = s.sm.SyncAchievements(mapping.AppID)
 			}
 		}
+		log.Printf("[SteamSync] Full synchronization completed")
 	}()
+
 	writeJSON(w, map[string]string{"status": "sync_started"})
 }
 

@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 
+	"main/logger"
+
 	_ "modernc.org/sqlite"
 
 	"main/launch"
@@ -18,6 +20,10 @@ func main() {
 		os.Exit(0)
 	}
 	defer l.Close()
+
+	// Initialiser le logger
+	logger.Init()
+	logger.Info("Démarrage de SteamTracker")
 
 	launch.StartProgramme()
 }

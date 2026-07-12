@@ -85,6 +85,10 @@
             header a {
                 margin-right: 12px;
             }
+            header a.active {
+                font-weight: bold;
+                text-decoration: underline;
+            }
             /* Info tooltip */
             .info-wrap {
                 position: relative;
@@ -151,6 +155,7 @@
         <header>
             <a href="/">Tableau de bord</a>
             <a href="/history">Historique</a>
+            <a href="/stats">Stats Succès</a>
             <h1>Configuration</h1>
         </header>
 
@@ -380,6 +385,21 @@
                 <div style="width: 100%">
                     <label
                         style="
+                            display: flex;
+                            align-items: center;
+                            gap: 8px;
+                            cursor: pointer;
+                            font-weight: bold;
+                            margin-bottom: 12px;
+                        "
+                    >
+                        <input type="checkbox" id="steamEnabled" checked />
+                        Activer l'intégration Steam
+                    </label>
+                </div>
+                <div style="width: 100%">
+                    <label
+                        style="
                             display: block;
                             font-weight: bold;
                             margin-bottom: 4px;
@@ -428,11 +448,19 @@
                         Notifications de succès (Windows Toast)
                     </label>
                 </div>
-                <div style="display: flex; gap: 8px">
+                <div style="display: flex; gap: 8px; align-items: center">
                     <button id="btnSaveSteam" class="btn-primary">
                         Enregistrer
                     </button>
                     <button id="btnSyncSteam">Synchronisation complète</button>
+                    <a
+                        href="/api/logs"
+                        target="_blank"
+                        class="small"
+                        style="text-decoration: underline; margin-left: 8px"
+                    >
+                        Voir les logs
+                    </a>
                 </div>
             </div>
         </section>
@@ -661,6 +689,8 @@
             async function loadSteamSettings() {
                 try {
                     const data = await fetchJSON("/api/steam/settings");
+                    document.getElementById("steamEnabled").checked =
+                        data.steam_enabled !== false;
                     document.getElementById("steamApiKey").value =
                         data.api_key || "";
                     document.getElementById("steamId").value =
@@ -684,11 +714,14 @@
                     const notifications_enabled =
                         document.getElementById("steamNotifs").checked;
 
+                    const steam_enabled =
+                        document.getElementById("steamEnabled").checked;
                     try {
                         await postJSON("/api/steam/settings", {
                             api_key,
                             steam_id,
                             notifications_enabled,
+                            steam_enabled,
                         });
                         alert("Paramètres Steam enregistrés !");
                     } catch (e) {
@@ -1081,5 +1114,16 @@
                     }
                 });
         </script>
+        <div
+            style="
+                text-align: center;
+                padding: 20px;
+                color: var(--muted);
+                font-size: 12px;
+                opacity: 0.6;
+            "
+        >
+            Version 1.0.0
+        </div>
     </body>
 </html>

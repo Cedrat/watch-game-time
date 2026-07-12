@@ -3,10 +3,14 @@ package manager
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"main/query"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type SteamManager struct {
@@ -32,46 +36,121 @@ type GetOwnedGamesResponse struct {
 	} `json:"response"`
 }
 
-// SyncOwnedGames fetches all owned games from Steam and updates the mapping table.
+// updateSyncStatus records the result of a synchronization attempt.
+func (sm *SteamManager) updateSyncStatus(status, errMsg string) {
+	now := time.Now().Format(time.RFC3339)
+	_ = sm.db.SetSetting("steam_last_sync_time", now)
+	_ = sm.db.SetSetting("steam_last_sync_status", status)
+	_ = sm.db.SetSetting("steam_last_sync_error", errMsg)
+}
+
+func (sm *SteamManager) downloadGameIcon(appid int) string {
+	localPath := fmt.Sprintf("web/static/images/%d.jpg", appid)
+	localURL := fmt.Sprintf("/static/images/%d.jpg", appid)
+
+	if _, err := os.Stat(localPath); err == nil {
+		return localURL
+	}
+
+	// Use the better vertical format
+	remoteURL := fmt.Sprintf("https://cdn.akamai.steamstatic.com/steam/apps/%d/library_600x900.jpg", appid)
+
+	resp, err := http.Get(remoteURL)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		// Fallback to capsule if vertical not available
+		remoteURL = fmt.Sprintf("https://cdn.akamai.steamstatic.com/steam/apps/%d/library_capsule.jpg", appid)
+		resp, err = http.Get(remoteURL)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			return ""
+		}
+	}
+	defer resp.Body.Close()
+
+	out, err := os.Create(localPath)
+	if err != nil {
+		log.Printf("[Steam] Error creating image file %s: %v", localPath, err)
+		return ""
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		log.Printf("[Steam] Error saving image %s: %v", localPath, err)
+		return ""
+	}
+
+	return localURL
+}
+
+// SyncOwnedGames fetches all owned games from Steam and updates the local cache.
 func (sm *SteamManager) SyncOwnedGames() error {
+	if !sm.db.GetSteamEnabled() {
+		return nil
+	}
 	apiKey, err := sm.db.GetSteamAPIKey()
 	if err != nil || apiKey == "" {
-		return fmt.Errorf("Steam API Key missing")
+		err = fmt.Errorf("Steam API Key missing")
+		sm.updateSyncStatus("Error", err.Error())
+		return err
 	}
 	steamID, err := sm.db.GetSteamID()
 	if err != nil || steamID == "" {
-		return fmt.Errorf("Steam ID missing")
+		err = fmt.Errorf("Steam ID missing")
+		sm.updateSyncStatus("Error", err.Error())
+		return err
 	}
 
 	u := fmt.Sprintf("http://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=%s&steamid=%s&format=json&include_appinfo=true", apiKey, steamID)
 	resp, err := http.Get(u)
 	if err != nil {
+		sm.updateSyncStatus("Error", err.Error())
 		return err
 	}
 	defer resp.Body.Close()
 
-	var data GetOwnedGamesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if resp.StatusCode == http.StatusTooManyRequests {
+		err = fmt.Errorf("Steam API rate limit exceeded (429)")
+		sm.updateSyncStatus("Rate Limited", err.Error())
 		return err
 	}
 
-	for _, game := range data.Response.Games {
-		// We don't necessarily know the process_name yet, but we can store known appids
-		// We use the game name as a hint for matching later
-		// If we already have a mapping for a process with this game name, we update it.
-		// Note: This is a simplified approach. Real matching usually happens when a game runs.
-		mapping := query.SteamMapping{
-			AppID:    game.AppID,
-			GameName: game.Name,
-			IconURL:  fmt.Sprintf("https://cdn.akamai.steamstatic.com/steam/apps/%d/header.jpg", game.AppID),
-		}
-
-		// Attempt to match by name if we don't have a direct process name link yet
-		// This part is tricky because one game name can have multiple processes.
-		// For now, we'll focus on providing an API to link them.
-		_ = mapping
+	var data GetOwnedGamesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		sm.updateSyncStatus("Error", err.Error())
+		return err
 	}
 
+	// Update local cache of owned games
+	tx, err := sm.db.Beginx()
+	if err != nil {
+		sm.updateSyncStatus("Error", "Database transaction failed")
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, game := range data.Response.Games {
+		iconURL := sm.downloadGameIcon(game.AppID)
+		if iconURL == "" {
+			iconURL = fmt.Sprintf("https://cdn.akamai.steamstatic.com/steam/apps/%d/library_capsule.jpg", game.AppID)
+		}
+
+		_, err := tx.Exec(`
+			INSERT INTO steam_owned_games (appid, game_name, icon_url)
+			VALUES (?, ?, ?)
+			ON CONFLICT(appid) DO UPDATE SET
+				game_name = excluded.game_name,
+				icon_url = excluded.icon_url`,
+			game.AppID, game.Name, iconURL)
+		if err != nil {
+			log.Printf("[Steam] Error caching game %d: %v", game.AppID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		sm.updateSyncStatus("Error", "Failed to commit owned games cache")
+		return err
+	}
+
+	sm.updateSyncStatus("Success", "")
 	return nil
 }
 
@@ -108,6 +187,9 @@ type GameSchemaResponse struct {
 // SyncAchievements fetches achievements for a specific game and updates the database.
 // It returns the number of newly unlocked achievements found.
 func (sm *SteamManager) SyncAchievements(appid int) (int, error) {
+	if !sm.db.GetSteamEnabled() {
+		return 0, nil
+	}
 	apiKey, _ := sm.db.GetSteamAPIKey()
 	steamID, _ := sm.db.GetSteamID()
 	if apiKey == "" || steamID == "" {
@@ -131,38 +213,37 @@ func (sm *SteamManager) SyncAchievements(appid int) (int, error) {
 		return 0, nil
 	}
 
-	// 2. Get Metadata (Names, Icons)
+	// 2. Get Metadata (Names, Icons) - Optional
 	uSchema := fmt.Sprintf("http://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key=%s&appid=%d&l=french", apiKey, appid)
 	respSchema, err := http.Get(uSchema)
-	if err != nil {
-		return 0, err
-	}
-	defer respSchema.Body.Close()
 
-	var schemaData GameSchemaResponse
-	if err := json.NewDecoder(respSchema.Body).Decode(&schemaData); err != nil {
-		return 0, err
-	}
-
-	// Build metadata map
 	metaMap := make(map[string]struct {
 		Name   string
 		Desc   string
 		Icon   string
 		Hidden bool
 	})
-	for _, a := range schemaData.Game.AvailableGameStats.Achievements {
-		metaMap[a.Name] = struct {
-			Name   string
-			Desc   string
-			Icon   string
-			Hidden bool
-		}{
-			Name:   a.DisplayName,
-			Desc:   a.Description,
-			Icon:   a.Icon,
-			Hidden: a.Hidden == 1,
+
+	if err == nil {
+		defer respSchema.Body.Close()
+		var schemaData GameSchemaResponse
+		if decodeErr := json.NewDecoder(respSchema.Body).Decode(&schemaData); decodeErr == nil {
+			for _, a := range schemaData.Game.AvailableGameStats.Achievements {
+				metaMap[a.Name] = struct {
+					Name   string
+					Desc   string
+					Icon   string
+					Hidden bool
+				}{
+					Name:   a.DisplayName,
+					Desc:   a.Description,
+					Icon:   a.Icon,
+					Hidden: a.Hidden == 1,
+				}
+			}
 		}
+	} else {
+		log.Printf("[Steam] Could not fetch schema for appid %d: %v", appid, err)
 	}
 
 	// 3. Compare with local DB to find "newly" tracked unlocks
@@ -178,12 +259,16 @@ func (sm *SteamManager) SyncAchievements(appid int) (int, error) {
 	newlyUnlockedCount := 0
 
 	for _, sa := range statusData.PlayerStats.Achievements {
-		meta := metaMap[sa.APIName]
+		meta, ok := metaMap[sa.APIName]
+		name := meta.Name
+		if !ok || name == "" {
+			name = sa.APIName
+		}
 
 		ach := query.Achievement{
 			AppID:       appid,
 			APIName:     sa.APIName,
-			Name:        meta.Name,
+			Name:        name,
 			Description: meta.Desc,
 			IconURL:     meta.Icon,
 			UnlockedAt:  sa.UnlockTime,
@@ -208,6 +293,9 @@ func (sm *SteamManager) SyncAchievements(appid int) (int, error) {
 
 // TryMatchProcessToSteam attempts to find an AppID for a given process and friendly name.
 func (sm *SteamManager) TryMatchProcessToSteam(processName, friendlyName string) error {
+	if !sm.db.GetSteamEnabled() {
+		return nil
+	}
 	// If already mapped, skip
 	m, _ := sm.db.GetSteamMapping(processName)
 	if m != nil {
@@ -242,11 +330,16 @@ func (sm *SteamManager) TryMatchProcessToSteam(processName, friendlyName string)
 		steamGameName := strings.ToLower(game.Name)
 		if steamGameName == cleanProcess || steamGameName == cleanFriendly || strings.Contains(cleanFriendly, steamGameName) || strings.Contains(steamGameName, cleanFriendly) {
 			// Found a potential match
+			iconURL := sm.downloadGameIcon(game.AppID)
+			if iconURL == "" {
+				iconURL = fmt.Sprintf("https://cdn.akamai.steamstatic.com/steam/apps/%d/library_capsule.jpg", game.AppID)
+			}
+
 			mapping := query.SteamMapping{
 				ProcessName: processName,
 				AppID:       game.AppID,
 				GameName:    game.Name,
-				IconURL:     fmt.Sprintf("https://cdn.akamai.steamstatic.com/steam/apps/%d/capsule_184x69.jpg", game.AppID),
+				IconURL:     iconURL,
 			}
 			return sm.db.SetSteamMapping(mapping)
 		}
@@ -265,6 +358,35 @@ func (sm *SteamManager) GetGameIcon(processName string) string {
 }
 
 // SendNotification sends a Windows toast notification using PowerShell.
+// SyncSingleGame fetches achievements and updates the icon for a specific game.
+func (sm *SteamManager) SyncSingleGame(appid int, processName string) (int, string, error) {
+	if !sm.db.GetSteamEnabled() {
+		return 0, "", fmt.Errorf("Steam is disabled")
+	}
+
+	// 1. Sync achievements
+	newlyUnlocked, err := sm.SyncAchievements(appid)
+	if err != nil {
+		return 0, "", err
+	}
+
+	// 2. Update/Ensure Icon URL
+	iconURL := sm.downloadGameIcon(appid)
+	if iconURL == "" {
+		iconURL = fmt.Sprintf("https://cdn.akamai.steamstatic.com/steam/apps/%d/library_capsule.jpg", appid)
+	}
+
+	// We need to update the mapping without erasing the GameName
+	// Let's use a custom query to only update the icon_url
+	_, err = sm.db.Exec(`
+		UPDATE steam_mapping
+		SET icon_url = ?
+		WHERE process_name = ?`,
+		iconURL, processName)
+
+	return newlyUnlocked, iconURL, err
+}
+
 func (sm *SteamManager) SendNotification(title, message string) {
 	// Simple PowerShell script to show a toast notification without extra dependencies
 	psCommand := fmt.Sprintf(`

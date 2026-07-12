@@ -58,3 +58,21 @@ func (db *Database) GetSteamAPIKey() (string, error) {
 func (db *Database) GetSteamID() (string, error) {
 	return db.GetSetting("steam_id")
 }
+
+// GetSteamEnabled retrieves the Steam activation status.
+func (db *Database) GetSteamEnabled() bool {
+	val, _ := db.GetSetting("steam_enabled")
+	if val == "" {
+		return true // Enabled by default
+	}
+	return val == "true"
+}
+
+// SetSteamEnabled saves the Steam activation status.
+func (db *Database) SetSteamEnabled(enabled bool) error {
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	return db.SetSetting("steam_enabled", val)
+}

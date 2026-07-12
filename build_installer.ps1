@@ -4,6 +4,8 @@ Write-Host "====================================" -ForegroundColor Cyan
 Write-Host "    SteamTracker Installer Builder   " -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
 
+echo "v1.0.0"
+
 # Step 1: Build the Go executable
 Write-Host "`n[1/3] Building Go application (GUI mode)..." -ForegroundColor Yellow
 try {

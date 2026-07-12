@@ -409,6 +409,21 @@ func (db *Database) updateDb() error {
 		}
 	}
 
+	if dbVersion < 10 {
+		fmt.Println("[DB] Updating to version 10 (Local Steam Games Cache)...")
+		_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS steam_owned_games (
+			appid INTEGER PRIMARY KEY,
+			game_name TEXT,
+			icon_url TEXT
+		);
+		UPDATE database_version SET db_version=10;
+		`)
+		if err != nil {
+			return fmt.Errorf("updateDb version 10: %w", err)
+		}
+	}
+
 	err = tx.Commit()
 	if err != nil {
 		return fmt.Errorf("updateDb: error at commit: %w", err)
